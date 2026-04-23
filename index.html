@@ -1283,6 +1283,166 @@
       margin-left: 4px;
     }
 
+    /* ============ Command palette ============ */
+    .cmdk {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(8px);
+      display: none;
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: 12vh;
+      z-index: 700;
+    }
+    .cmdk.show { display: flex; animation: fadeIn 0.15s var(--ease); }
+    .cmdk-body {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      width: 560px;
+      max-width: 92vw;
+      box-shadow: 0 30px 60px rgba(0,0,0,0.5);
+      overflow: hidden;
+      animation: modalIn 0.2s var(--ease);
+    }
+    .cmdk-input {
+      width: 100%;
+      padding: 18px 22px;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-size: 15px;
+      outline: none;
+      border-bottom: 1px solid var(--border);
+    }
+    .cmdk-input::placeholder { color: var(--text-dim); }
+    .cmdk-list { max-height: 420px; overflow-y: auto; padding: 6px; }
+    .cmdk-item {
+      padding: 10px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+    }
+    .cmdk-item.active { background: var(--accent-soft); }
+    .cmdk-item .cmdk-icon { color: var(--text-muted); flex-shrink: 0; }
+    .cmdk-item.active .cmdk-icon { color: var(--accent); }
+    .cmdk-item .cmdk-label { flex: 1; }
+    .cmdk-item .cmdk-sub { font-size: 11px; color: var(--text-muted); }
+    .cmdk-hint {
+      padding: 8px 14px;
+      font-size: 10px;
+      color: var(--text-muted);
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+    }
+
+    /* ============ Keyboard help ============ */
+    .help-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 22px;
+      font-size: 12.5px;
+    }
+    .help-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .help-label { color: var(--text-muted); }
+    .kbd { font-family: "SF Mono", Menlo, monospace; background: var(--surface-2); border: 1px solid var(--border); padding: 2px 6px; border-radius: 4px; font-size: 11px; color: var(--text); }
+
+    /* ============ Activity log ============ */
+    .activity-row {
+      display: grid;
+      grid-template-columns: 90px 80px 1fr;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 11.5px;
+      gap: 10px;
+      align-items: center;
+    }
+    .activity-row:hover { background: var(--surface-2); }
+    .activity-row .a-time { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+    .activity-row .a-type {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      text-align: center;
+      background: var(--surface-2);
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .activity-row .a-type.start { background: var(--accent-soft); color: var(--accent); }
+    .activity-row .a-type.done { background: var(--success-soft); color: var(--success); }
+    .activity-row .a-type.error { background: var(--danger-soft); color: var(--danger); }
+    .activity-row .a-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ============ Lyrics pane ============ */
+    .lyrics-pane {
+      position: fixed;
+      right: 24px;
+      top: 80px;
+      bottom: 80px;
+      width: 320px;
+      background: rgba(22, 22, 27, 0.85);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      overflow-y: auto;
+      display: none;
+      z-index: 501;
+    }
+    .lyrics-pane.show { display: block; }
+    .lyrics-line {
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text-muted);
+      padding: 2px 0;
+      transition: color 0.2s, font-size 0.2s;
+      cursor: pointer;
+    }
+    .lyrics-line.current {
+      color: var(--text);
+      font-weight: 700;
+      font-size: 16px;
+    }
+
+    /* ============ Theme / accent picker ============ */
+    .accent-grid {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .accent-swatch {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    .accent-swatch:hover { transform: scale(1.1); }
+    .accent-swatch.active { border-color: var(--text); }
+
+    /* Visualizer canvas in music-art when no thumb */
+    #visualizer {
+      position: absolute;
+      inset: 10%;
+      width: 80%;
+      height: 80%;
+      pointer-events: none;
+    }
+
     /* ============ Mini player bar (Spotify-style) ============ */
     .mini-player {
       position: fixed;
@@ -1984,6 +2144,13 @@
           </button>
         </div>
         <div class="music-sub-controls">
+          <button class="music-sub-btn" id="musicShuffleBtn" title="Shuffle">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
+          </button>
+          <button class="music-sub-btn" id="musicRepeatBtn" title="Repeat off">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          </button>
+          <button class="music-sub-btn" id="musicLyricsBtn" title="Lyrics">Lyrics</button>
           <button class="music-sub-btn" id="musicSpeedBtn" title="Playback speed">1×</button>
           <div class="music-volume">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
@@ -2010,6 +2177,17 @@
         <p>Preferences are saved automatically.</p>
       </div>
       <div class="modal-content">
+        <div class="setting-row">
+          <label>Theme</label>
+          <select id="setTheme">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <label>Accent color</label>
+          <div class="accent-grid" id="setAccentGrid"></div>
+        </div>
         <div class="setting-row">
           <label>Download folder</label>
           <div style="display:flex;gap:6px;align-items:center;">

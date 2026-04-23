@@ -917,10 +917,13 @@ ipcMain.handle('probe-fast', async (_e, url) => {
       '--no-playlist',
       '--no-warnings',
       '--no-check-formats',
-      '--extractor-args', 'youtube:skip=dash,hls;player_client=web_safari',
+      '--extractor-args', 'youtube:skip=dash,hls',
       '--print', '%(title)s\x1f%(uploader,channel)s\x1f%(duration)s\x1f%(thumbnail)s\x1f%(id)s',
     ];
-    const raw = await ytDlpWrap.execPromise(args);
+    const raw = await Promise.race([
+      ytDlpWrap.execPromise(args),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 25000)),
+    ]);
     const [title, uploader, duration, thumbnail, id] = raw.trim().split('\x1f');
     return {
       ok: true,
@@ -1279,8 +1282,12 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
     try {
       const infoArgs = playlist
         ? [url, '--flat-playlist', '--dump-single-json', '--no-warnings']
-        : [url, '--dump-single-json', '--no-playlist', '--no-warnings'];
-      const infoRaw = await ytDlpWrap.execPromise(infoArgs);
+        : [url, '--dump-single-json', '--no-playlist', '--no-warnings', '--no-check-formats', '--extractor-args', 'youtube:skip=hls'];
+      const timeoutMs = playlist ? 60000 : 30000;
+      const infoRaw = await Promise.race([
+        ytDlpWrap.execPromise(infoArgs),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('info-probe timeout')), timeoutMs)),
+      ]);
       const info = JSON.parse(infoRaw);
       const isPl = info._type === 'playlist' || Array.isArray(info.entries);
       meta = {

@@ -256,19 +256,11 @@ async function startDownload() {
     if (!confirm(`Already downloaded:\n${dup.filepath}\n\nDownload again?`)) return;
   }
 
-  // Fast probe reuse: if we already have info, skip backend's slow probe
+  // Fast probe reuse: ONLY use what's already cached — never block the user
+  // waiting for a new probe. Backend will handle the probe if needed.
   let prefetched = state.meta || probeCache.get(url);
   if (!prefetched && !$('optPlaylist').checked) {
-    prefetched = await api.probeCacheGet(url);
-  }
-  if (!prefetched && !$('optPlaylist').checked) {
-    // Kick off a quick fast-probe (non-blocking would be nicer but keep simple)
-    const quick = await api.probeFast(url);
-    if (quick && quick.ok) {
-      prefetched = quick;
-      probeCache.set(url, quick);
-      api.probeCacheSet(url, quick);
-    }
+    prefetched = await api.probeCacheGet(url); // disk read is fast (<10ms)
   }
 
   const format = currentFormat();
@@ -926,6 +918,28 @@ settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal)
 async function openSettings() {
   const s = await api.getSettings();
   state.settings = s;
+  const setTheme = $('setTheme');
+  const grid = $('setAccentGrid');
+  if (setTheme) setTheme.value = s.theme || 'dark';
+  if (grid) {
+    grid.innerHTML = ACCENTS.map((a) => `<span class="accent-swatch accent-${a} ${(s.accent || 'teal') === a ? 'active' : ''}" data-a="${a}" style="background:var(--a-${a},#999)"></span>`).join('');
+    // Need inline backgrounds since CSS vars for each accent aren't defined yet; hard-code hexes
+    const SW = { teal:'#5eead4', purple:'#c084fc', pink:'#f472b6', blue:'#60a5fa', orange:'#fb923c', green:'#4ade80', red:'#f87171', yellow:'#fbbf24' };
+    grid.querySelectorAll('.accent-swatch').forEach((el) => {
+      el.style.background = SW[el.dataset.a];
+      el.addEventListener('click', () => {
+        grid.querySelectorAll('.accent-swatch').forEach((x) => x.classList.remove('active'));
+        el.classList.add('active');
+        const theme = setTheme ? setTheme.value : 'dark';
+        applyTheme(theme, el.dataset.a);
+        api.updateSettings({ accent: el.dataset.a });
+      });
+    });
+  }
+  if (setTheme) setTheme.addEventListener('change', () => {
+    applyTheme(setTheme.value, (state.settings && state.settings.accent) || 'teal');
+    api.updateSettings({ theme: setTheme.value });
+  }, { once: true });
   $('setFolderDisplay').textContent = s.downloadFolder || '— not set —';
   $('setConcurrency').value = s.concurrency || 1;
   $('setSpeedLimit').value = s.speedLimit || '';
@@ -1470,10 +1484,297 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && $('fabSheetBackdrop').classList.contains('show')) closeFabSheet();
 });
 
+// ============ Shuffle + repeat ============
+let shuffleOn = false;
+let repeatMode = 'off'; // 'off' | 'all' | 'one'
+const musicShuffleBtn = $('musicShuffleBtn');
+const musicRepeatBtn = $('musicRepeatBtn');
+if (musicShuffleBtn) musicShuffleBtn.addEventListener('click', () => {
+  shuffleOn = !shuffleOn;
+  musicShuffleBtn.style.color = shuffleOn ? 'var(--accent)' : '';
+  musicShuffleBtn.style.borderColor = shuffleOn ? 'var(--accent)' : '';
+  toast(`Shuffle ${shuffleOn ? 'on' : 'off'}`, 'info');
+  api.updateSettings({ shuffle: shuffleOn });
+});
+if (musicRepeatBtn) musicRepeatBtn.addEventListener('click', () => {
+  repeatMode = repeatMode === 'off' ? 'all' : repeatMode === 'all' ? 'one' : 'off';
+  musicRepeatBtn.style.color = repeatMode === 'off' ? '' : 'var(--accent)';
+  musicRepeatBtn.style.borderColor = repeatMode === 'off' ? '' : 'var(--accent)';
+  musicRepeatBtn.textContent = repeatMode === 'one' ? '↻1' : '';
+  if (repeatMode !== 'one') musicRepeatBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>';
+  toast(`Repeat ${repeatMode}`, 'info');
+  api.updateSettings({ repeat: repeatMode });
+});
+
+// Override default "ended → next" to handle shuffle/repeat
+playerVideo.addEventListener('ended', () => {
+  if (repeatMode === 'one') { playerVideo.currentTime = 0; playerVideo.play(); return; }
+  if (playlistForPlayer.length <= 1) return;
+  let nextIdx;
+  if (shuffleOn) {
+    do { nextIdx = Math.floor(Math.random() * playlistForPlayer.length); }
+    while (nextIdx === playerIdx && playlistForPlayer.length > 1);
+  } else {
+    nextIdx = playerIdx + 1;
+    if (nextIdx >= playlistForPlayer.length) {
+      if (repeatMode === 'all') nextIdx = 0;
+      else return;
+    }
+  }
+  const next = playlistForPlayer[nextIdx];
+  playerIdx = nextIdx;
+  playFile(next.filepath, next.title, next);
+}, { capture: true });
+
+// ============ Lyrics pane ============
+const lyricsPane = $('lyricsPane');
+const musicLyricsBtn = $('musicLyricsBtn');
+let lyricsData = null;
+let lyricsShown = false;
+
+function parseSyncedLyrics(synced) {
+  if (!synced) return null;
+  const lines = synced.split('\n').map((line) => {
+    const m = line.match(/\[(\d+):(\d+(?:\.\d+)?)\](.*)/);
+    if (!m) return null;
+    return { t: parseInt(m[1]) * 60 + parseFloat(m[2]), text: m[3].trim() };
+  }).filter(Boolean);
+  return lines.length ? lines : null;
+}
+
+async function loadLyrics(title, artist) {
+  if (!title) { lyricsPane.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:20px;">No track.</div>'; return; }
+  lyricsPane.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:20px;">Searching lyrics…</div>';
+  const cleanTitle = title
+    .replace(/\(Official.*?\)|\[Official.*?\]/gi, '')
+    .replace(/\(Audio\)|\(Lyrics?\)|\(HD\)|\(4K\)|\(Remaster.*?\)/gi, '')
+    .replace(/\s+-\s+YouTube\s*$/i, '')
+    .trim();
+  let cleanArtist = artist;
+  // Try to split "Artist - Title"
+  if (!artist && /\s-\s/.test(cleanTitle)) {
+    const parts = cleanTitle.split(/\s+-\s+/);
+    if (parts.length === 2) { cleanArtist = parts[0].trim(); }
+  }
+  const res = await api.fetchLyrics(cleanArtist || '', cleanTitle.replace(/^.+?\s+-\s+/, ''));
+  if (!res.ok || (!res.synced && !res.plain)) {
+    lyricsPane.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:20px;">No lyrics found.</div>';
+    lyricsData = null;
+    return;
+  }
+  const synced = parseSyncedLyrics(res.synced);
+  lyricsData = synced ? { type: 'synced', lines: synced } : { type: 'plain', text: res.plain };
+  renderLyrics();
+}
+
+function renderLyrics() {
+  if (!lyricsData) { return; }
+  if (lyricsData.type === 'synced') {
+    lyricsPane.innerHTML = lyricsData.lines.map((l, i) =>
+      `<div class="lyrics-line" data-t="${l.t}" data-i="${i}">${(l.text || ' ').replace(/</g, '&lt;')}</div>`
+    ).join('');
+    lyricsPane.querySelectorAll('.lyrics-line').forEach((el) => {
+      el.addEventListener('click', () => {
+        if (playerVideo.duration) playerVideo.currentTime = parseFloat(el.dataset.t);
+      });
+    });
+  } else {
+    lyricsPane.innerHTML = `<pre style="white-space:pre-wrap;color:var(--text);font-size:13px;line-height:1.7;font-family:inherit;">${(lyricsData.text || '').replace(/</g, '&lt;')}</pre>`;
+  }
+}
+
+playerVideo.addEventListener('timeupdate', () => {
+  if (!lyricsShown || !lyricsData || lyricsData.type !== 'synced') return;
+  const t = playerVideo.currentTime;
+  const lines = lyricsPane.querySelectorAll('.lyrics-line');
+  let currentIdx = -1;
+  for (let i = 0; i < lyricsData.lines.length; i++) {
+    if (t >= lyricsData.lines[i].t) currentIdx = i;
+    else break;
+  }
+  lines.forEach((el, i) => el.classList.toggle('current', i === currentIdx));
+  const active = lines[currentIdx];
+  if (active) active.scrollIntoView({ block: 'center', behavior: 'smooth' });
+});
+
+if (musicLyricsBtn) musicLyricsBtn.addEventListener('click', async () => {
+  lyricsShown = !lyricsShown;
+  lyricsPane.classList.toggle('show', lyricsShown);
+  musicLyricsBtn.style.color = lyricsShown ? 'var(--accent)' : '';
+  if (lyricsShown && !lyricsData) {
+    await loadLyrics(musicTitle.textContent, musicArtist.textContent);
+  }
+});
+
+// Reset lyrics on new track
+const _origPlayFile = playFile;
+async function playWithLyricsReset(filepath, title, entry) {
+  lyricsData = null;
+  if (lyricsShown) lyricsPane.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:20px;">…</div>';
+  await _origPlayFile.call(null, filepath, title, entry);
+  if (lyricsShown) await loadLyrics(musicTitle.textContent, musicArtist.textContent);
+}
+
+// ============ Theme + accent picker ============
+const THEMES = ['dark', 'light'];
+const ACCENTS = ['teal', 'purple', 'pink', 'blue', 'orange', 'green', 'red', 'yellow'];
+function applyTheme(theme, accent) {
+  document.body.classList.remove('theme-light', 'theme-dark');
+  document.body.classList.add(theme === 'light' ? 'theme-light' : 'theme-dark');
+  ACCENTS.forEach((a) => document.body.classList.remove('accent-' + a));
+  document.body.classList.add('accent-' + (accent || 'teal'));
+}
+
+// ============ Command palette (⌘K) ============
+const cmdk = $('cmdk');
+const cmdkInput = $('cmdkInput');
+const cmdkList = $('cmdkList');
+let cmdkItems = [];
+let cmdkActive = 0;
+
+function buildCommands() {
+  return [
+    { label: 'New download', sub: 'Paste a URL', icon: '⬇', run: () => { setView('download'); setMode('idle'); urlInput.focus(); } },
+    { label: 'Open Library', sub: '⌘2', icon: '▦', run: () => setView('library') },
+    { label: 'Open Browser', sub: '⌘3', icon: '🌐', run: () => setView('browse') },
+    { label: 'Settings', sub: '⌘,', icon: '⚙︎', run: () => openSettings() },
+    { label: 'Activity log', sub: 'See recent events', icon: '≡', run: () => openActivity() },
+    { label: 'Keyboard shortcuts', sub: '?', icon: '⌨', run: () => openHelp() },
+    { label: 'Install browser extension', sub: 'Chrome / Firefox / Safari', icon: '🧩', run: () => openInstaller() },
+    { label: 'Update yt-dlp', sub: 'Fetch latest binary', icon: '⟳', run: async () => { toast('Updating yt-dlp…'); const r = await api.updateYtdlp(); toast(r.ok ? 'Updated' : 'Failed', r.ok ? 'success' : 'error'); } },
+    { label: 'Clear history', sub: 'Danger', icon: '✕', run: async () => { if (confirm('Clear all history?')) await api.clearHistory(); renderLibrary(); } },
+    { label: 'Toggle theme (dark / light)', icon: '◐', run: () => {
+      const cur = document.body.classList.contains('theme-light') ? 'light' : 'dark';
+      const next = cur === 'light' ? 'dark' : 'light';
+      applyTheme(next, (state.settings && state.settings.accent) || 'teal');
+      api.updateSettings({ theme: next });
+    } },
+    ...ACCENTS.map((a) => ({
+      label: 'Accent: ' + a.charAt(0).toUpperCase() + a.slice(1),
+      icon: '●', iconColor: `var(--accent)`,
+      run: () => { applyTheme(document.body.classList.contains('theme-light') ? 'light' : 'dark', a); api.updateSettings({ accent: a }); },
+    })),
+    { label: 'Play / Pause', sub: 'Space', icon: '▶', run: () => { if (currentPlaying) musicPlayBtn.click(); } },
+    { label: 'Toggle shuffle', icon: '⇄', run: () => musicShuffleBtn && musicShuffleBtn.click() },
+    { label: 'Toggle lyrics', icon: '♪', run: () => musicLyricsBtn && musicLyricsBtn.click() },
+  ];
+}
+
+function fuzzyMatch(query, text) {
+  if (!query) return 1;
+  query = query.toLowerCase();
+  text = text.toLowerCase();
+  if (text.includes(query)) return 2;
+  // Simple subsequence match
+  let qi = 0;
+  for (const ch of text) {
+    if (ch === query[qi]) qi++;
+    if (qi === query.length) return 1;
+  }
+  return 0;
+}
+
+function renderCmdk() {
+  const q = cmdkInput.value.trim();
+  const all = buildCommands();
+  cmdkItems = all
+    .map((c) => ({ ...c, score: fuzzyMatch(q, c.label + ' ' + (c.sub || '')) }))
+    .filter((c) => c.score > 0)
+    .sort((a, b) => b.score - a.score);
+  if (cmdkActive >= cmdkItems.length) cmdkActive = 0;
+  cmdkList.innerHTML = cmdkItems.map((c, i) =>
+    `<div class="cmdk-item ${i === cmdkActive ? 'active' : ''}" data-i="${i}">
+      <span class="cmdk-icon">${c.icon || '·'}</span>
+      <span class="cmdk-label">${c.label.replace(/</g, '&lt;')}</span>
+      ${c.sub ? `<span class="cmdk-sub">${c.sub}</span>` : ''}
+    </div>`
+  ).join('');
+  cmdkList.querySelectorAll('.cmdk-item').forEach((el) => {
+    el.addEventListener('mouseenter', () => { cmdkActive = parseInt(el.dataset.i); renderCmdk(); });
+    el.addEventListener('click', () => runCmdkItem(parseInt(el.dataset.i)));
+  });
+}
+
+function runCmdkItem(i) {
+  const c = cmdkItems[i];
+  if (!c) return;
+  closeCmdk();
+  try { c.run(); } catch (e) { toast(e.message, 'error'); }
+}
+function openCmdk() { cmdk.classList.add('show'); cmdkInput.value = ''; cmdkActive = 0; renderCmdk(); setTimeout(() => cmdkInput.focus(), 10); }
+function closeCmdk() { cmdk.classList.remove('show'); }
+cmdkInput && cmdkInput.addEventListener('input', () => { cmdkActive = 0; renderCmdk(); });
+cmdkInput && cmdkInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeCmdk(); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); cmdkActive = Math.min(cmdkItems.length - 1, cmdkActive + 1); renderCmdk(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); cmdkActive = Math.max(0, cmdkActive - 1); renderCmdk(); }
+  else if (e.key === 'Enter') { e.preventDefault(); runCmdkItem(cmdkActive); }
+});
+cmdk && cmdk.addEventListener('click', (e) => { if (e.target === cmdk) closeCmdk(); });
+
+// ============ Keyboard help ============
+const KEY_HELP = [
+  { key: '⌘K', label: 'Command palette' },
+  { key: '⌘1', label: 'Download tab' },
+  { key: '⌘2', label: 'Library tab' },
+  { key: '⌘3', label: 'Browser tab' },
+  { key: '⌘,', label: 'Settings' },
+  { key: '⌘F', label: 'Focus search' },
+  { key: '⌘K', label: 'Clear URL input' },
+  { key: '⌘⏎', label: 'Start download' },
+  { key: 'Space', label: 'Play / Pause' },
+  { key: '←/→', label: 'Seek 15s' },
+  { key: '⌘←/→', label: 'Previous / Next track' },
+  { key: 'F', label: 'Expand / collapse player' },
+  { key: 'Esc', label: 'Close dialog / collapse player' },
+  { key: '?', label: 'This help' },
+];
+
+function openHelp() {
+  const grid = $('helpGrid');
+  grid.innerHTML = KEY_HELP.map((r) =>
+    `<div class="help-row"><span class="help-label">${r.label}</span><span class="kbd">${r.key}</span></div>`
+  ).join('');
+  $('helpModal').classList.add('show');
+}
+$('helpClose') && $('helpClose').addEventListener('click', () => $('helpModal').classList.remove('show'));
+
+// ============ Activity log ============
+async function openActivity() {
+  const log = await api.getActivityLog();
+  $('activityList').innerHTML = log.length
+    ? log.map((e) => {
+        const t = new Date(e.ts);
+        const tt = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
+        return `<div class="activity-row">
+          <span class="a-time">${tt}</span>
+          <span class="a-type ${e.type}">${e.type}</span>
+          <span class="a-msg" title="${(e.msg || '').replace(/"/g, '&quot;')}">${(e.msg || '').replace(/</g, '&lt;')}</span>
+        </div>`;
+      }).join('')
+    : '<div style="text-align:center;padding:40px;color:var(--text-muted);">No activity yet.</div>';
+  $('activityModal').classList.add('show');
+}
+$('activityClose') && $('activityClose').addEventListener('click', () => $('activityModal').classList.remove('show'));
+$('activityClear') && $('activityClear').addEventListener('click', async () => { await api.clearActivityLog(); openActivity(); });
+
+// ============ Global keyboard shortcuts ============
+document.addEventListener('keydown', (e) => {
+  const inField = ['INPUT', 'TEXTAREA'].includes(e.target.tagName);
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && !inField) {
+    e.preventDefault(); openCmdk();
+  } else if (e.key === '?' && !inField) {
+    e.preventDefault(); openHelp();
+  }
+});
+
 // ============ Boot ============
 (async () => {
   const s = await api.getSettings();
   state.settings = s;
+  applyTheme(s.theme || 'dark', s.accent || 'teal');
+  if (s.shuffle) { shuffleOn = true; if (musicShuffleBtn) { musicShuffleBtn.style.color = 'var(--accent)'; musicShuffleBtn.style.borderColor = 'var(--accent)'; } }
+  if (s.repeat && s.repeat !== 'off') { repeatMode = s.repeat; if (musicRepeatBtn) { musicRepeatBtn.style.color = 'var(--accent)'; musicRepeatBtn.style.borderColor = 'var(--accent)'; } }
   if (s.audioFormat) audioFormat.value = s.audioFormat;
   if (s.videoQuality) videoQuality.value = s.videoQuality;
   if (s.selectedTile) {
