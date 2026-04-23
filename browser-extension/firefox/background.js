@@ -68,11 +68,28 @@ chrome.commands.onCommand.addListener((cmd) => {
   });
 });
 
-// Popup messages
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+// Per-tab media cache for the popup.
+const tabMedia = {};           // { [tabId]: { urls: [...], pageUrl, pageTitle, supported } }
+const autoSent = new Set();    // tabIds where we've already auto-sent on this page
+
+async function getSetting(key, def) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([key], (obj) => resolve(obj[key] === undefined ? def : obj[key]));
+  });
+}
+
+function setBadge(tabId, count, supported) {
+  const text = count > 0 ? (count > 9 ? '9+' : String(count)) : (supported ? '●' : '');
+  const color = supported ? '#03dac6' : '#666';
+  chrome.action.setBadgeText({ tabId, text });
+  chrome.action.setBadgeBackgroundColor({ tabId, color });
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === 'send' && msg.url) {
     sendToApp(msg.url);
     sendResponse({ ok: true });
+    return;
   }
   if (msg && msg.type === 'send-active') {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -81,4 +98,45 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     });
     return true;
   }
+  if (msg && msg.type === 'page-media' && sender.tab) {
+    const tabId = sender.tab.id;
+    tabMedia[tabId] = {
+      urls: msg.urls || [],
+      pageUrl: msg.pageUrl,
+      pageTitle: msg.pageTitle,
+      supported: !!msg.supportedVideoPage,
+    };
+    setBadge(tabId, msg.urls.length, msg.supportedVideoPage);
+
+    // Auto-send toggle
+    getSetting('autoSendOnSupported', false).then((on) => {
+      if (on && msg.supportedVideoPage && !autoSent.has(tabId)) {
+        autoSent.add(tabId);
+        sendToApp(msg.pageUrl);
+      }
+    });
+    return;
+  }
+  if (msg && msg.type === 'get-tab-media' && msg.tabId) {
+    sendResponse(tabMedia[msg.tabId] || { urls: [], supported: false });
+    return;
+  }
+  if (msg && msg.type === 'send-many' && Array.isArray(msg.urls)) {
+    msg.urls.forEach((u, i) => setTimeout(() => sendToApp(u), i * 400));
+    sendResponse({ ok: true, count: msg.urls.length });
+    return;
+  }
+});
+
+// Clear per-tab state on navigation
+chrome.webNavigation.onBeforeNavigate.addListener((d) => {
+  if (d.frameId === 0) {
+    autoSent.delete(d.tabId);
+    delete tabMedia[d.tabId];
+    setBadge(d.tabId, 0, false);
+  }
+});
+chrome.tabs.onRemoved.addListener((tabId) => {
+  delete tabMedia[tabId];
+  autoSent.delete(tabId);
 });

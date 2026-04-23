@@ -1,5 +1,5 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "Send to Downloader for Mac",
   "version": "1.0.0",
   "description": "One-click send YouTube / Vimeo / Twitter / TikTok / 1800+ other video URLs to Downloader for Mac.",
@@ -9,7 +9,7 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-  "browser_action": {
+  "action": {
     "default_popup": "popup.html",
     "default_title": "Send to Downloader for Mac",
     "default_icon": {
@@ -18,11 +18,19 @@
       "48": "icons/icon-48.png"
     }
   },
-  "permissions": ["contextMenus", "activeTab", "tabs", "storage", "notifications"],
+  "permissions": ["contextMenus", "activeTab", "tabs", "storage", "notifications", "webNavigation"],
+  "host_permissions": ["<all_urls>"],
   "background": {
-    "scripts": ["background.js"],
-    "persistent": false
+    "scripts": ["background.js"]
   },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
   "commands": {
     "send_current_tab": {
       "suggested_key": { "default": "Ctrl+Shift+D", "mac": "Command+Shift+D" },
@@ -32,7 +40,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "downloader-for-mac@ahfoysal.dev",
-      "strict_min_version": "109.0"
+      "strict_min_version": "115.0"
     }
   }
 }
