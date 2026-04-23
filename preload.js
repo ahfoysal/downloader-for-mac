@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onDeepLink: (cb) => ipcRenderer.on('deep-link-url', (_e, url) => cb(url)),
   onWatchFolderUrls: (cb) => ipcRenderer.on('watch-folder-urls', (_e, urls) => cb(urls)),
   onScheduledTrigger: (cb) => ipcRenderer.on('scheduled-trigger', (_e, task) => cb(task)),
+  onExtensionPing: (cb) => ipcRenderer.on('extension-ping', (_e, data) => cb(data)),
   cancelDownload: () => ipcRenderer.send('cancel-download'),
   retryItem: (payload) => ipcRenderer.send('retry-item', payload),
   selectDownloadFolder: () => ipcRenderer.invoke('select-download-folder'),

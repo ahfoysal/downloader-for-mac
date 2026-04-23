@@ -43,6 +43,13 @@ chrome.runtime.onInstalled.addListener(() => {
     title: 'Send video to Downloader for Mac',
     contexts: ['video', 'audio'],
   });
+  // One-time handshake ping to register this extension with the app
+  const manifest = chrome.runtime.getManifest();
+  const browserName = navigator.userAgent.match(/(Firefox|Edg|OPR|Arc|Brave|Vivaldi)/i)?.[1] || 'chrome';
+  const ping = `downloader://ping?browser=${encodeURIComponent(browserName)}&version=${encodeURIComponent(manifest.version)}`;
+  chrome.tabs.create({ url: ping, active: false }, (tab) => {
+    setTimeout(() => { try { chrome.tabs.remove(tab.id); } catch (_) {} }, 1200);
+  });
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {

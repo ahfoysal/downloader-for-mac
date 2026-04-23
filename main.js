@@ -72,12 +72,15 @@ let appSettings = {
   resume: true,
   format: 'mp3',
   concurrency: 1,
-  speedLimit: '',           // e.g. "2M"
-  outputTemplate: '',        // empty = default
+  speedLimit: '',
+  outputTemplate: '',
   organizeByUploader: false,
   keepAwake: true,
   watchFolder: '',
-  scheduled: [],             // [{id, url, format, opts, cron: 'daily'|'weekly', hour, minute, day, last}]
+  scheduled: [],
+  extensionInstalled: false,      // set once a ping arrives from any browser extension
+  extensionLastSeen: null,         // ISO timestamp of last ping
+  extensionBanner: 'show',         // 'show' | 'dismissed'
 };
 let powerBlockerId = null;
 
@@ -155,11 +158,34 @@ if (!app.isDefaultProtocolClient('downloader')) {
 let mainWindow = null;
 function handleDeepLink(rawUrl) {
   if (!rawUrl || !rawUrl.startsWith('downloader://')) return;
+
+  // Extension handshake: `downloader://ping?browser=chrome&version=1.0.0`
+  if (rawUrl.startsWith('downloader://ping')) {
+    const now = new Date().toISOString();
+    const wasInstalled = appSettings.extensionInstalled;
+    appSettings.extensionInstalled = true;
+    appSettings.extensionLastSeen = now;
+    saveSettings();
+    const qs = rawUrl.split('?')[1] || '';
+    const params = Object.fromEntries(qs.split('&').map((p) => p.split('=').map(decodeURIComponent)));
+    if (mainWindow) {
+      mainWindow.webContents.send('extension-ping', { ...params, firstTime: !wasInstalled });
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+    return;
+  }
+
   const payload = rawUrl.replace(/^downloader:\/\/(url\/)?/, '');
   let target = '';
   try { target = decodeURIComponent(payload); } catch (_) { target = payload; }
+  // Any deep-link counts as 'extension used'
+  appSettings.extensionInstalled = true;
+  appSettings.extensionLastSeen = new Date().toISOString();
+  saveSettings();
   if (mainWindow) {
     mainWindow.webContents.send('deep-link-url', target);
+    mainWindow.webContents.send('extension-ping', { firstTime: false });
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   }

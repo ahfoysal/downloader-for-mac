@@ -31,7 +31,11 @@
       display: grid;
       grid-template-columns: 1fr 320px;
       height: 100vh;
+      transition: grid-template-columns 0.25s ease;
     }
+    .app.no-sidebar { grid-template-columns: 1fr 0; }
+    .app.no-sidebar .sidebar { transform: translateX(100%); opacity: 0; pointer-events: none; }
+    .sidebar { transition: transform 0.25s ease, opacity 0.25s ease; }
     .main {
       padding: 28px 28px 20px;
       overflow-y: auto;
@@ -437,6 +441,75 @@
       font-weight: 500;
     }
 
+    /* Extension install banner */
+    .ext-banner {
+      background: linear-gradient(90deg, rgba(3,218,198,0.08), rgba(3,218,198,0.02));
+      border: 1px solid rgba(3,218,198,0.25);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+    }
+    .ext-banner.hidden { display: none; }
+    .ext-banner .ext-icon {
+      font-size: 18px;
+      line-height: 1;
+    }
+    .ext-banner .ext-body { flex: 1; }
+    .ext-banner .ext-title { font-weight: 600; margin-bottom: 2px; }
+    .ext-banner .ext-sub { color: var(--muted); font-size: 11px; }
+    .ext-banner .ext-actions {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .ext-banner button {
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .ext-banner button.ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+    .ext-banner button.ghost:hover { color: var(--text); }
+    .ext-banner.installed {
+      border-color: rgba(74,222,128,0.3);
+      background: linear-gradient(90deg, rgba(74,222,128,0.08), rgba(74,222,128,0.02));
+    }
+
+    /* Sidebar toggle button (shown when sidebar hidden) */
+    .sidebar-toggle {
+      position: fixed;
+      top: 18px;
+      right: 18px;
+      z-index: 10;
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.15s;
+    }
+    .sidebar-toggle:hover { color: var(--text); background: var(--panel-2); }
+    .app:not(.no-sidebar) .sidebar-toggle { display: none; }
+
+    /* Sidebar's own toggle (when visible) */
+    .sidebar-header .toggle-btn {
+      padding: 2px 8px;
+      margin-right: 4px;
+    }
+
     .playlist-card {
       margin-top: 14px;
       background: var(--panel);
@@ -683,10 +756,26 @@
     </div>
   </div>
 
-  <div class="app">
+  <button class="sidebar-toggle" id="showSidebarBtn" title="Show history (⌘/)">☰</button>
+
+  <div class="app" id="appRoot">
     <div class="main">
-      <h1>Downloader for Mac <button class="icon-btn" id="settingsBtn" title="Settings (⌘,)">⚙︎</button></h1>
+      <h1>Downloader for Mac
+        <button class="icon-btn" id="settingsBtn" title="Settings (⌘,)">⚙︎</button>
+      </h1>
       <div class="subtitle">Audio &amp; video from YouTube, Vimeo, Twitter/X, TikTok, SoundCloud, Twitch, and 1800+ more sites.</div>
+
+      <div class="ext-banner" id="extBanner">
+        <span class="ext-icon">🧩</span>
+        <div class="ext-body">
+          <div class="ext-title" id="extBannerTitle">Install the browser extension</div>
+          <div class="ext-sub" id="extBannerSub">One-click send from Chrome / Firefox / Safari — no copy-paste.</div>
+        </div>
+        <div class="ext-actions">
+          <button id="extInstallBtn">Install</button>
+          <button class="ghost" id="extDismissBtn">×</button>
+        </div>
+      </div>
 
       <div class="section-label">Save to</div>
       <div class="folder-row">
@@ -754,11 +843,16 @@
         </label>
       </div>
       <div class="opt-row time-row">
-        <span class="opt-sublabel">Clip:</span>
-        <input class="time-input" id="startTime" type="text" placeholder="start (0:00)" />
-        <span style="color:var(--muted)">→</span>
-        <input class="time-input" id="endTime" type="text" placeholder="end (inf)" />
-        <span class="time-hint">optional — m:ss or h:mm:ss</span>
+        <label class="opt">
+          <input type="checkbox" id="clipToggle" />
+          <span>Clip section</span>
+        </label>
+        <div class="clip-inputs" id="clipInputs" style="display:none;gap:8px;align-items:center;">
+          <input class="time-input" id="startTime" type="text" placeholder="start 0:00" />
+          <span style="color:var(--muted)">→</span>
+          <input class="time-input" id="endTime" type="text" placeholder="end inf" />
+          <span class="time-hint">m:ss or h:mm:ss</span>
+        </div>
       </div>
 
       <div class="status-card empty" id="statusCard">
@@ -784,7 +878,10 @@
     <div class="sidebar">
       <div class="sidebar-header">
         <span class="sidebar-title">History</span>
-        <button id="clearHistoryBtn">Clear all</button>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <button class="toggle-btn" id="hideSidebarBtn" title="Hide (⌘/)">→</button>
+          <button id="clearHistoryBtn">Clear all</button>
+        </div>
       </div>
       <div style="padding:8px 12px 0;">
         <input id="historySearch" type="text" placeholder="Search history…" spellcheck="false" style="font-size:12px;padding:6px 10px;" />
@@ -856,6 +953,28 @@
     const startTime = $('startTime');
     const endTime = $('endTime');
     const resumeToggle = $('resumeToggle');
+    const clipToggle = $('clipToggle');
+    const clipInputs = $('clipInputs');
+
+    clipToggle.addEventListener('change', () => {
+      clipInputs.style.display = clipToggle.checked ? 'flex' : 'none';
+      if (!clipToggle.checked) { startTime.value = ''; endTime.value = ''; }
+    });
+
+    // Auto-detect playlist URL
+    function looksLikePlaylist(url) {
+      return /[?&]list=[^&]+/i.test(url) || /\/playlist\?/.test(url) || /\/channel\//.test(url) || /\/@[\w.-]+\/?$/.test(url);
+    }
+    function autoTickPlaylist() {
+      const u = urlInput.value.trim();
+      if (looksLikePlaylist(u)) {
+        if (!playlistToggle.checked) {
+          playlistToggle.checked = true;
+          toast('Playlist detected — full playlist enabled', 'success');
+        }
+      }
+    }
+    urlInput.addEventListener('input', autoTickPlaylist);
     const historySearch = $('historySearch');
 
     function fmtBytes(b) {
@@ -1370,6 +1489,7 @@
         const u = urlInput.value.trim();
         if (/^https?:\/\//i.test(u)) {
           urlInput.blur();
+          autoTickPlaylist();
           analyzeUrl(u);
         }
       }, 10);
@@ -1535,6 +1655,7 @@
     // ===== Deep link + watch folder + scheduled triggers =====
     window.electronAPI.onDeepLink((url) => {
       urlInput.value = url;
+      autoTickPlaylist();
       analyzeUrl(url);
       toast('URL received from link', 'success');
     });
@@ -1546,6 +1667,95 @@
     window.electronAPI.onScheduledTrigger((task) => {
       toast(`Running scheduled: ${task.url.slice(0, 40)}…`, 'success');
       window.electronAPI.downloadAudio(task.url, task.format, task.opts || {});
+    });
+
+    // ===== Extension detection banner =====
+    const extBanner = $('extBanner');
+    const extBannerTitle = $('extBannerTitle');
+    const extBannerSub = $('extBannerSub');
+    const extInstallBtn = $('extInstallBtn');
+    const extDismissBtn = $('extDismissBtn');
+
+    function refreshBanner(settings) {
+      const installed = settings && settings.extensionInstalled;
+      const dismissed = settings && settings.extensionBanner === 'dismissed';
+      if (installed) {
+        extBanner.classList.add('installed');
+        extBanner.classList.remove('hidden');
+        extBannerTitle.textContent = '✓ Browser extension connected';
+        const last = settings.extensionLastSeen ? new Date(settings.extensionLastSeen).toLocaleString() : 'just now';
+        extBannerSub.textContent = `Last ping: ${last}`;
+        extInstallBtn.textContent = 'Reinstall';
+        extDismissBtn.textContent = '×';
+      } else if (dismissed) {
+        extBanner.classList.add('hidden');
+      } else {
+        extBanner.classList.remove('hidden', 'installed');
+        extBannerTitle.textContent = 'Browser extension not detected';
+        extBannerSub.textContent = 'One-click send from Chrome / Firefox / Safari — no copy-paste.';
+        extInstallBtn.textContent = 'Install';
+        extDismissBtn.textContent = '×';
+      }
+    }
+
+    extDismissBtn.addEventListener('click', async () => {
+      await window.electronAPI.updateSettings({ extensionBanner: 'dismissed' });
+      extBanner.classList.add('hidden');
+    });
+
+    extInstallBtn.addEventListener('click', () => {
+      const msg = `Install the browser extension (dev mode):
+
+CHROME / EDGE / BRAVE / ARC / VIVALDI:
+1. Open chrome://extensions
+2. Toggle Developer mode (top-right)
+3. Click "Load unpacked"
+4. Pick this folder:
+   browser-extension/chrome/
+
+FIREFOX:
+1. Open about:debugging#/runtime/this-firefox
+2. Click "Load Temporary Add-on…"
+3. Pick:
+   browser-extension/firefox/manifest.json
+
+SAFARI:
+See browser-extension/README.md (Xcode wrap required)
+
+The full path to the extensions folder has been copied to your clipboard.`;
+      navigator.clipboard.writeText('/Users/foysal/Downloads/youtube-music-download/browser-extension/').catch(() => {});
+      alert(msg);
+    });
+
+    window.electronAPI.onExtensionPing((data) => {
+      // Re-fetch settings so banner updates
+      window.electronAPI.getSettings().then(refreshBanner);
+      if (data && data.firstTime) {
+        toast(`✓ ${data.browser || 'Browser'} extension connected!`, 'success');
+      }
+    });
+
+    // Initial banner render from settings
+    window.electronAPI.getSettings().then(refreshBanner);
+
+    // ===== Sidebar toggle =====
+    const appRoot = $('appRoot');
+    const hideSidebarBtn = $('hideSidebarBtn');
+    const showSidebarBtn = $('showSidebarBtn');
+    function toggleSidebar() {
+      appRoot.classList.toggle('no-sidebar');
+      localStorage.setItem('sidebarHidden', appRoot.classList.contains('no-sidebar') ? '1' : '0');
+    }
+    hideSidebarBtn.addEventListener('click', toggleSidebar);
+    showSidebarBtn.addEventListener('click', toggleSidebar);
+    if (localStorage.getItem('sidebarHidden') === '1') appRoot.classList.add('no-sidebar');
+
+    // Keyboard shortcut ⌘/
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === '/') {
+        e.preventDefault();
+        toggleSidebar();
+      }
     });
   </script>
 </body>
