@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       prefetchedMeta: opts.prefetchedMeta || null,
     }),
   probeFormats: (url) => ipcRenderer.invoke('probe-formats', url),
+  probeFast: (url) => ipcRenderer.invoke('probe-fast', url),
   readClipboard: () => require('electron').clipboard.readText(),
   detectBrowsers: () => ipcRenderer.invoke('detect-browsers'),
   extensionFolder: (browser) => ipcRenderer.invoke('extension-folder', browser),

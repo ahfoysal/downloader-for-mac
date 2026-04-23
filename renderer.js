@@ -255,6 +255,22 @@ async function startDownload() {
   if (dup.duplicate) {
     if (!confirm(`Already downloaded:\n${dup.filepath}\n\nDownload again?`)) return;
   }
+
+  // Fast probe reuse: if we already have info, skip backend's slow probe
+  let prefetched = state.meta || probeCache.get(url);
+  if (!prefetched && !$('optPlaylist').checked) {
+    prefetched = await api.probeCacheGet(url);
+  }
+  if (!prefetched && !$('optPlaylist').checked) {
+    // Kick off a quick fast-probe (non-blocking would be nicer but keep simple)
+    const quick = await api.probeFast(url);
+    if (quick && quick.ok) {
+      prefetched = quick;
+      probeCache.set(url, quick);
+      api.probeCacheSet(url, quick);
+    }
+  }
+
   const format = currentFormat();
   const opts = {
     playlist: $('optPlaylist').checked,
@@ -264,6 +280,13 @@ async function startDownload() {
     startTime: optClip.checked ? $('clipStart').value.trim() || null : null,
     endTime: optClip.checked ? $('clipEnd').value.trim() || null : null,
     resume: $('optResume').checked,
+    prefetchedMeta: prefetched ? {
+      title: prefetched.title || null,
+      uploader: prefetched.uploader || null,
+      thumbnail: prefetched.thumbnail || null,
+      duration: prefetched.duration || null,
+      skipProbe: !$('optPlaylist').checked,
+    } : null,
   };
   // Reset UI to downloading state
   state.playlistState = [];
@@ -497,7 +520,13 @@ librarySearch.addEventListener('input', renderLibrary);
 async function renderLibrary() {
   // First, auto-heal: scan download folder for orphan files and add them to history
   try { await api.reconcileLibrary(); } catch (_) {}
-  const entries = await api.getHistory();
+  let entries = await api.getHistory();
+  // Sort: recently added first. Fall back to file mtime when timestamp missing.
+  entries = [...entries].sort((a, b) => {
+    const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+    const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+    return tb - ta;
+  });
   state.history = entries;
   const q = librarySearch.value.trim().toLowerCase();
   const enriched = await Promise.all(entries.map(async (e) => {
@@ -1117,21 +1146,24 @@ function initBrowse() {
   // with real formats (no "Picking formats" spinner).
   let prefetchTimer = null;
   let lastPrefetchUrl = null;
-  function schedulePrefetch(url) {
+  async function schedulePrefetch(url) {
     if (!url || !isVideoWatchUrl(url)) return;
     if (probeCache.has(url) || url === lastPrefetchUrl) return;
+    // Disk cache hit? load it in-memory too, skip network.
+    const disk = await api.probeCacheGet(url);
+    if (disk) { probeCache.set(url, disk); return; }
     clearTimeout(prefetchTimer);
-    // Small delay so we don't fire on every SPA micro-navigation
+    // Shorter debounce — fast probe is cheap, fire early
     prefetchTimer = setTimeout(async () => {
       lastPrefetchUrl = url;
-      const res = await api.probeFormats(url);
+      // Fast probe: title/thumb/duration only, ~1-3s
+      const res = await api.probeFast(url);
       if (res && res.ok) {
         probeCache.set(url, res);
-        // Expire after 2 min — longer than click-driven cache since this is
-        // speculative and the user may take a while to decide
+        api.probeCacheSet(url, res);
         setTimeout(() => { probeCache.delete(url); if (lastPrefetchUrl === url) lastPrefetchUrl = null; }, 120 * 1000);
       }
-    }, 1200);
+    }, 400);
   }
 
   function updateSendBtn(url) {
@@ -1351,24 +1383,27 @@ async function openFabSheet(url) {
     if (!live.title) titleEl.textContent = '—';
   });
 
-  // 3) Check cache — skip yt-dlp probe if we already have fresh data
-  if (probeCache.has(url)) {
+  // 3) Disk cache first
+  const diskHit = await api.probeCacheGet(url);
+  if (diskHit) {
+    probeCache.set(url, diskHit);
+    applyProbeResult(diskHit);
+  } else if (probeCache.has(url)) {
     applyProbeResult(probeCache.get(url));
-    return;
   }
 
-  // 4) Kick off the real probe in the background — upgrade the sheet when done
-  api.probeFormats(url).then((res) => {
-    if (!res.ok) {
-      // Keep presets; just stop the spinner
-      subEl.textContent = '—';
-      return;
-    }
-    probeCache.set(url, res);
-    // Expire cache after 60s
-    setTimeout(() => probeCache.delete(url), 60 * 1000);
-    applyProbeResult(res);
-  });
+  // 4) Always fire a real (format-inclusive) probe if we don't have formats yet
+  const haveFormats = (diskHit && diskHit.formats && diskHit.formats.length > 0) ||
+                      (probeCache.get(url) && probeCache.get(url).formats && probeCache.get(url).formats.length > 0);
+  if (!haveFormats) {
+    api.probeFormats(url).then((res) => {
+      if (!res.ok) { subEl.textContent = '—'; return; }
+      probeCache.set(url, res);
+      api.probeCacheSet(url, res);
+      setTimeout(() => probeCache.delete(url), 60 * 1000);
+      applyProbeResult(res);
+    });
+  }
 
   function applyProbeResult(res) {
     state.meta = res;

@@ -905,10 +905,48 @@ ipcMain.handle('file-hash', async (_e, filepath) => {
   });
 });
 
+// Fast probe: only title/uploader/duration/thumbnail via --print.
+// Skips DASH/HLS format enumeration which is ~80% of the extraction time.
+// Returns in ~1-3s vs ~5-15s for the full --dump-single-json.
+ipcMain.handle('probe-fast', async (_e, url) => {
+  if (!url) return { ok: false, error: 'no url' };
+  try {
+    const args = [
+      url,
+      '--skip-download',
+      '--no-playlist',
+      '--no-warnings',
+      '--no-check-formats',
+      '--extractor-args', 'youtube:skip=dash,hls;player_client=web_safari',
+      '--print', '%(title)s\x1f%(uploader,channel)s\x1f%(duration)s\x1f%(thumbnail)s\x1f%(id)s',
+    ];
+    const raw = await ytDlpWrap.execPromise(args);
+    const [title, uploader, duration, thumbnail, id] = raw.trim().split('\x1f');
+    return {
+      ok: true,
+      title: title && title !== 'NA' ? title : null,
+      uploader: uploader && uploader !== 'NA' ? uploader : null,
+      duration: duration && duration !== 'NA' ? parseFloat(duration) : null,
+      thumbnail: thumbnail && thumbnail !== 'NA' ? thumbnail : null,
+      id: id && id !== 'NA' ? id : null,
+      formats: [],   // no format list in fast mode
+    };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 ipcMain.handle('probe-formats', async (_e, url) => {
   if (!url) return { ok: false, error: 'no url' };
   try {
-    const args = ['--dump-single-json', '--no-playlist', '--no-warnings', url];
+    const args = [
+      '--dump-single-json',
+      '--no-playlist',
+      '--no-warnings',
+      '--no-check-formats',
+      '--extractor-args', 'youtube:skip=hls',
+      url,
+    ];
     const raw = await ytDlpWrap.execPromise(args);
     const info = JSON.parse(raw);
     const formats = (info.formats || [])
