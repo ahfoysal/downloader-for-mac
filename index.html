@@ -1,0 +1,119 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>YouTube Downloader</title>
+  <style>
+    body {
+      background-color: #121212;
+      color: #e0e0e0;
+      font-family: Arial, sans-serif;
+      padding: 30px;
+    }
+    h1 {
+      text-align: center;
+      color: #fff;
+    }
+    input, select, button {
+      width: 100%;
+      padding: 12px;
+      margin: 10px 0;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+    }
+    input, select {
+      background-color: #1e1e1e;
+      color: #fff;
+    }
+    button {
+      background-color: #03dac6;
+      color: #000;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+    button:hover {
+      background-color: #00c4b4;
+    }
+    .progress {
+      margin-top: 20px;
+    }
+    .folder-path {
+      font-size: 14px;
+      color: #aaa;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>YouTube Downloader</h1>
+  <button id="selectFolderBtn">📁 Select Download Folder</button>
+  <div class="folder-path" id="folderPath">📂 No folder selected</div>
+  <input id="urlInput" type="text" placeholder="Paste YouTube URL here" />
+  <select id="formatSelect">
+    <option value="webm">WebM (best quality)</option>
+    <option value="mp3">MP3 (convert)</option>
+  </select>
+  <button id="downloadBtn">Download</button>
+
+  <div class="progress" id="progressText">Ready.</div>
+  <div style="background:#1e1e1e;border-radius:4px;height:10px;margin-top:8px;overflow:hidden">
+    <div id="progressBar" style="background:#03dac6;height:100%;width:0%;transition:width .2s"></div>
+  </div>
+
+  <script>
+    const urlInput = document.getElementById('urlInput');
+    const formatSelect = document.getElementById('formatSelect');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const selectFolderBtn = document.getElementById('selectFolderBtn');
+    const folderPathDisplay = document.getElementById('folderPath');
+    const progressText = document.getElementById('progressText');
+    const progressBar = document.getElementById('progressBar');
+
+    const updateFolderDisplay = (path) => {
+      folderPathDisplay.textContent = path ? `📂 ${path}` : '📂 No folder selected';
+    };
+
+    selectFolderBtn.addEventListener('click', async () => {
+      const folder = await window.electronAPI.selectDownloadFolder();
+      updateFolderDisplay(folder);
+    });
+
+    downloadBtn.addEventListener('click', () => {
+      const url = urlInput.value.trim();
+      const format = formatSelect.value;
+      if (url) {
+        window.electronAPI.downloadAudio(url, format);
+        progressText.textContent = 'Starting… (first launch may take ~20s)';
+        progressBar.style.width = '0%';
+      }
+    });
+
+    window.electronAPI.onStatus((msg) => {
+      progressText.textContent = msg;
+    });
+
+    window.electronAPI.onProgress((data) => {
+      const pct = data && data.percent != null ? data.percent : 0;
+      const speed = data && data.speed ? ` @ ${data.speed}` : '';
+      const eta = data && data.eta ? ` • ETA ${data.eta}` : '';
+      progressText.textContent = `Downloading: ${pct}%${speed}${eta}`;
+      progressBar.style.width = `${pct}%`;
+    });
+
+    window.electronAPI.onComplete(() => {
+      progressText.textContent = '✅ Download complete!';
+      progressBar.style.width = '100%';
+    });
+
+    window.electronAPI.onError((message) => {
+      progressText.textContent = `❌ Error: ${message}`;
+    });
+
+    // Load saved folder on app start
+    window.electronAPI.getSavedFolder().then(updateFolderDisplay);
+  </script>
+</body>
+</html>

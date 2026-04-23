@@ -1,0 +1,9 @@
+node_modules/
+dist/
+bin/yt-dlp
+bin/yt-dlp.exe
+bin/ffmpeg
+bin/ffmpeg.exe
+.DS_Store
+__MACOSX/
+*.log
