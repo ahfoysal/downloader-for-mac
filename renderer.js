@@ -338,11 +338,33 @@ $('btnErrorRetry').addEventListener('click', () => { setMode('idle'); btnDownloa
 
 // ============ Queue panel ============
 api.onQueueState((data) => {
+  const prevTotal = state.queueState.active.length + state.queueState.queued.length;
   state.queueState = data;
   renderQueue();
-  // Auto-switch to queue mode if >1 downloads
-  if (data.active.length + data.queued.length > 1 && state.view === 'download') setMode('queue');
-  else if (data.active.length + data.queued.length === 0 && state.mode === 'queue') setMode('idle');
+  const total = data.active.length + data.queued.length;
+  // >1 parallel → queue view
+  if (total > 1) {
+    setMode('queue');
+    return;
+  }
+  // Exactly 1 active and we're currently idle/done/error → show the downloading card
+  if (data.active.length === 1 && (state.mode === 'idle' || state.mode === 'done' || state.mode === 'error' || state.mode === 'queue')) {
+    const d = data.active[0];
+    $('dlTitle').textContent = d.title || d.url || 'Downloading…';
+    $('dlSub').textContent = d.state === 'starting' ? 'Fetching video info…' : (d.speed ? d.speed : 'Starting…');
+    const pct = d.percent || 0;
+    $('dlPercent').textContent = pct.toFixed(1) + '%';
+    $('dlBar').style.width = pct + '%';
+    $('dlBarWrap').classList.toggle('indeterminate', pct === 0);
+    $('dlSpeed').textContent = d.speed || '—';
+    $('dlEta').textContent = d.eta ? 'ETA ' + d.eta : '—';
+    $('dlThumb').classList.add('hidden');
+    $('dlThumbPlaceholder').classList.remove('hidden');
+    setMode('downloading');
+    return;
+  }
+  // Nothing happening any more; if we were in queue mode, drop back to idle
+  if (total === 0 && state.mode === 'queue') setMode('idle');
 });
 function renderQueue() {
   $('queueCount').textContent = `${state.queueState.active.length} active · ${state.queueState.queued.length} waiting`;
