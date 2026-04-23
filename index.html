@@ -751,6 +751,8 @@
     body.mini-active .browse-fab.show { transform: translateX(-50%) translateY(0); }
     /* FAB only on Browse tab */
     body:not(.view-browse) .browse-fab { display: none; }
+    /* Hide FAB when the quality sheet is open */
+    body.sheet-open .browse-fab { opacity: 0 !important; pointer-events: none !important; }
     .browse-fab.show {
       opacity: 1;
       pointer-events: auto;

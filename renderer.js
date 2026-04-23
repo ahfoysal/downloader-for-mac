@@ -1288,6 +1288,7 @@ async function openFabSheet(url) {
     thumb.src = '';
   }
   backdrop.classList.add('show');
+  document.body.classList.add('sheet-open');
 
   let picked = false;
   async function pick(ev) {
@@ -1425,6 +1426,7 @@ async function openFabSheet(url) {
 }
 function closeFabSheet() {
   $('fabSheetBackdrop').classList.remove('show');
+  document.body.classList.remove('sheet-open');
 }
 document.addEventListener('click', (e) => {
   if (e.target.id === 'fabSheetBackdrop' || e.target.closest('#fabSheetClose')) closeFabSheet();
