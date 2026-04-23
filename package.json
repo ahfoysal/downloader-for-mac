@@ -29,6 +29,8 @@
   "description": "Simple native macOS app for downloading audio from YouTube.",
   "main": "main.js",
   "scripts": {
+    "postinstall": "node scripts/fetch-binaries.js",
+    "fetch-binaries": "node scripts/fetch-binaries.js",
     "start": "electron .",
     "dist": "cross-env USE_HARD_LINKS=false ELECTRON_BUILDER_DISABLE_MIRROR=true electron-builder --win --x64",
     "dist:mac": "cross-env USE_HARD_LINKS=false ELECTRON_BUILDER_DISABLE_MIRROR=true electron-builder --mac --arm64",

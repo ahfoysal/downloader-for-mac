@@ -1,5 +1,5 @@
 // main.js
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, powerSaveBlocker } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -65,7 +65,21 @@ function saveJSON(p, data) {
   }
 }
 
-let appSettings = { downloadFolder: null, subtitles: false, cookiesBrowser: 'none' };
+let appSettings = {
+  downloadFolder: null,
+  subtitles: false,
+  cookiesBrowser: 'none',
+  resume: true,
+  format: 'mp3',
+  concurrency: 1,
+  speedLimit: '',           // e.g. "2M"
+  outputTemplate: '',        // empty = default
+  organizeByUploader: false,
+  keepAwake: true,
+  watchFolder: '',
+  scheduled: [],             // [{id, url, format, opts, cron: 'daily'|'weekly', hour, minute, day, last}]
+};
+let powerBlockerId = null;
 
 function loadSettings() {
   const s = loadJSON(settingsPath, {});
@@ -133,6 +147,92 @@ function buildMenu(win) {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// Deep-link protocol: downloader://url/<encoded-url>
+if (!app.isDefaultProtocolClient('downloader')) {
+  app.setAsDefaultProtocolClient('downloader');
+}
+
+let mainWindow = null;
+function handleDeepLink(rawUrl) {
+  if (!rawUrl || !rawUrl.startsWith('downloader://')) return;
+  const payload = rawUrl.replace(/^downloader:\/\/(url\/)?/, '');
+  let target = '';
+  try { target = decodeURIComponent(payload); } catch (_) { target = payload; }
+  if (mainWindow) {
+    mainWindow.webContents.send('deep-link-url', target);
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+}
+
+// Single-instance lock so subsequent `open downloader://...` invocations route to our window.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) app.quit();
+app.on('second-instance', (_e, argv) => {
+  if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus(); }
+  const link = argv.find((a) => a && a.startsWith('downloader://'));
+  if (link) handleDeepLink(link);
+});
+app.on('open-url', (e, url) => { e.preventDefault(); handleDeepLink(url); });
+
+// Watch-folder for .txt URL lists.
+let watchInterval = null;
+function startWatchFolder() {
+  if (watchInterval) clearInterval(watchInterval);
+  const dir = appSettings.watchFolder;
+  if (!dir || !fs.existsSync(dir)) return;
+  const seen = new Set();
+  watchInterval = setInterval(() => {
+    try {
+      const files = fs.readdirSync(dir).filter((f) => /\.(txt|urls)$/i.test(f));
+      for (const f of files) {
+        const full = path.join(dir, f);
+        const stat = fs.statSync(full);
+        const key = `${full}:${stat.mtimeMs}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const urls = fs.readFileSync(full, 'utf8')
+          .split(/\r?\n/).map((s) => s.trim())
+          .filter((s) => /^https?:\/\//i.test(s));
+        if (urls.length && mainWindow) {
+          mainWindow.webContents.send('watch-folder-urls', urls);
+        }
+      }
+    } catch (err) { console.error('watch folder error', err); }
+  }, 5000);
+}
+
+// Scheduled tasks — simple interval check every minute.
+let schedulerInterval = null;
+function startScheduler() {
+  if (schedulerInterval) clearInterval(schedulerInterval);
+  schedulerInterval = setInterval(() => {
+    const now = new Date();
+    const tasks = appSettings.scheduled || [];
+    let changed = false;
+    for (const t of tasks) {
+      if (!t.url || !t.cron) continue;
+      const last = t.last ? new Date(t.last) : null;
+      const shouldRun = matchCron(t, now, last);
+      if (shouldRun) {
+        t.last = now.toISOString();
+        changed = true;
+        if (mainWindow) mainWindow.webContents.send('scheduled-trigger', t);
+      }
+    }
+    if (changed) { saveSettings(); }
+  }, 60 * 1000);
+}
+function matchCron(t, now, last) {
+  if (last && (now - last) < 30 * 60 * 1000) return false; // min 30 min gap
+  const h = now.getHours(), m = now.getMinutes();
+  if (t.hour != null && t.hour !== h) return false;
+  if (t.minute != null && Math.abs(t.minute - m) > 2) return false;
+  if (t.cron === 'daily') return true;
+  if (t.cron === 'weekly') return t.day === now.getDay();
+  return false;
+}
+
 app.whenReady().then(() => {
   loadSettings();
   try {
@@ -140,15 +240,22 @@ app.whenReady().then(() => {
   } catch (err) {
     console.error('Failed to set yt-dlp binary path:', err);
   }
-  const win = new BrowserWindow({
-    width: 900,
-    height: 720,
-    minWidth: 780,
-    minHeight: 560,
+  mainWindow = new BrowserWindow({
+    width: 960,
+    height: 740,
+    minWidth: 820,
+    minHeight: 600,
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
   });
-  win.loadFile('index.html');
-  buildMenu(win);
+  mainWindow.loadFile('index.html');
+  buildMenu(mainWindow);
+
+  // Handle deep link passed at launch (macOS sometimes passes via argv).
+  const link = process.argv.find((a) => a && a.startsWith('downloader://'));
+  if (link) mainWindow.webContents.once('did-finish-load', () => handleDeepLink(link));
+
+  startWatchFolder();
+  startScheduler();
 });
 
 app.on('window-all-closed', () => {
@@ -172,9 +279,52 @@ ipcMain.handle('get-saved-folder', () => selectedDownloadFolder);
 ipcMain.handle('get-history', () => loadHistory());
 ipcMain.handle('get-settings', () => ({ ...appSettings }));
 ipcMain.handle('update-settings', (_e, patch) => {
+  const prevWatch = appSettings.watchFolder;
   appSettings = { ...appSettings, ...patch };
   saveSettings();
+  if (patch.watchFolder !== undefined && patch.watchFolder !== prevWatch) startWatchFolder();
   return { ...appSettings };
+});
+
+ipcMain.handle('pick-folder', async (_e, title = 'Select Folder') => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({ title, properties: ['openDirectory'] });
+  return canceled || !filePaths[0] ? null : filePaths[0];
+});
+
+// Detect installed browsers for cookie auto-mode.
+function detectInstalledBrowsers() {
+  const apps = {
+    safari: '/Applications/Safari.app',
+    chrome: '/Applications/Google Chrome.app',
+    firefox: '/Applications/Firefox.app',
+    brave: '/Applications/Brave Browser.app',
+    edge: '/Applications/Microsoft Edge.app',
+    arc: '/Applications/Arc.app',
+    vivaldi: '/Applications/Vivaldi.app',
+  };
+  return Object.keys(apps).filter((k) => fs.existsSync(apps[k]));
+}
+ipcMain.handle('detect-browsers', () => detectInstalledBrowsers());
+
+// Disk space check (returns GB free, or null if unknown).
+function diskFreeGB(dir) {
+  try {
+    const { execSync } = require('child_process');
+    const out = execSync(`df -k "${dir}" | tail -1`).toString();
+    const parts = out.trim().split(/\s+/);
+    // format: Filesystem 1K-blocks Used Available Capacity Mounted
+    return Math.floor(parseInt(parts[3], 10) / (1024 * 1024));
+  } catch (_) {
+    return null;
+  }
+}
+ipcMain.handle('disk-free', (_e, dir) => diskFreeGB(dir || selectedDownloadFolder));
+
+// Check if a URL was already downloaded (by URL match in history).
+ipcMain.handle('check-duplicate', (_e, url) => {
+  const h = loadHistory();
+  const match = h.find((e) => e.url === url && e.filepath && fs.existsSync(e.filepath));
+  return match ? { duplicate: true, filepath: match.filepath, timestamp: match.timestamp } : { duplicate: false };
 });
 
 ipcMain.handle('probe-formats', async (_e, url) => {
@@ -321,7 +471,10 @@ ipcMain.on('retry-item', async (event, { url, format, index, playlistFolder, sub
   if (subtitles && preset.kind === 'video') {
     args.push('--write-subs', '--write-auto-subs', '--sub-langs', 'en.*,en', '--embed-subs', '--convert-subs', 'srt');
   }
-  if (cookiesBrowser && cookiesBrowser !== 'none') {
+  if (cookiesBrowser === 'auto') {
+    const installed = detectInstalledBrowsers();
+    if (installed.length) args.push('--cookies-from-browser', installed[0]);
+  } else if (cookiesBrowser && cookiesBrowser !== 'none') {
     args.push('--cookies-from-browser', cookiesBrowser);
   }
 
@@ -374,6 +527,18 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
   };
 
   send('download-status', playlist ? 'Fetching playlist info…' : 'Fetching video info…');
+
+  // Disk space warning (< 500 MB free)
+  const freeGB = diskFreeGB(selectedDownloadFolder);
+  if (freeGB != null && freeGB < 0.5) {
+    send('download-error', `Only ${freeGB.toFixed(1)} GB free in download folder`);
+    return;
+  }
+
+  // Keep-awake
+  if (appSettings.keepAwake && powerBlockerId == null) {
+    try { powerBlockerId = powerSaveBlocker.start('prevent-app-suspension'); } catch (_) {}
+  }
 
   let meta = { title: null, uploader: null, duration: null, thumbnail: null, playlistCount: null };
   let playlistItems = [];
@@ -436,7 +601,10 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
   if (subtitles && preset.kind === 'video') {
     args.push('--write-subs', '--write-auto-subs', '--sub-langs', 'en.*,en', '--embed-subs', '--convert-subs', 'srt');
   }
-  if (cookiesBrowser && cookiesBrowser !== 'none') {
+  if (cookiesBrowser === 'auto') {
+    const installed = detectInstalledBrowsers();
+    if (installed.length) args.push('--cookies-from-browser', installed[0]);
+  } else if (cookiesBrowser && cookiesBrowser !== 'none') {
     args.push('--cookies-from-browser', cookiesBrowser);
   }
   if (startTime || endTime) {
@@ -523,8 +691,13 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
     if (lastStartedIndex != null && lastStartedIndex !== lastCompletedIndex) {
       send('item-state', { index: lastStartedIndex, state: 'error', error: 'Item failed or unavailable' });
     }
+    // Stop keep-awake when queue is idle (best effort)
+    if (powerBlockerId != null) {
+      try { powerSaveBlocker.stop(powerBlockerId); } catch (_) {}
+      powerBlockerId = null;
+    }
     if (code && code !== 0 && completed.length === 0) {
-      send('download-error', `yt-dlp exited with code ${code}`);
+      send('download-error', `yt-dlp exited with code ${code}. Tip: Tools → Update yt-dlp if this keeps happening.`);
       currentDownload = null;
       return;
     }
