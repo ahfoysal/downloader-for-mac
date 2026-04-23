@@ -1003,21 +1003,45 @@ ipcMain.on('retry-item', async (event, { url, format, index, playlistFolder, sub
   });
 });
 
+function forceKillTree(proc) {
+  if (!proc || !proc.pid) return;
+  const pid = proc.pid;
+  try { proc.kill('SIGINT'); } catch (_) {}
+  // Also kill any descendants (ffmpeg, etc.) — yt-dlp spawns conversion helpers
+  // which SIGINT on the parent doesn't always propagate to on macOS.
+  try {
+    const { execSync } = require('child_process');
+    // Find direct children via pgrep, then recurse
+    const walk = (p) => {
+      try {
+        const out = execSync(`pgrep -P ${p}`, { encoding: 'utf8' }).trim();
+        if (out) out.split('\n').forEach((c) => { walk(parseInt(c)); try { process.kill(parseInt(c), 'SIGINT'); } catch(_) {} });
+      } catch (_) {}
+    };
+    walk(pid);
+  } catch (_) {}
+  // Backup: hard-kill after 800ms if the process is still around
+  setTimeout(() => {
+    try { if (proc.exitCode == null) proc.kill('SIGKILL'); } catch (_) {}
+  }, 800);
+}
+
 ipcMain.on('cancel-download', (_e, downloadId) => {
   if (downloadId) {
     const d = activeDownloads.get(downloadId);
-    if (d && d.proc && d.proc.ytDlpProcess) {
-      try { d.proc.ytDlpProcess.kill('SIGTERM'); } catch (_) {}
-    }
+    if (d && d.proc && d.proc.ytDlpProcess) forceKillTree(d.proc.ytDlpProcess);
     // Also remove from queue if pending
     const idx = downloadQueue.findIndex((q) => q.id === downloadId);
-    if (idx >= 0) downloadQueue.splice(idx, 1);
+    if (idx >= 0) { downloadQueue.splice(idx, 1); broadcastQueue(); }
     return;
   }
-  // Fallback: cancel most recent if no id given
-  if (currentDownload && !currentDownload.killed) {
-    try { currentDownload.ytDlpProcess && currentDownload.ytDlpProcess.kill('SIGTERM'); } catch (_) {}
+  // No id given — cancel every active download
+  for (const [, d] of activeDownloads) {
+    if (d && d.proc && d.proc.ytDlpProcess) forceKillTree(d.proc.ytDlpProcess);
   }
+  // And clear pending queue
+  if (downloadQueue.length) { downloadQueue.length = 0; broadcastQueue(); }
+  if (currentDownload && currentDownload.ytDlpProcess) forceKillTree(currentDownload.ytDlpProcess);
 });
 
 ipcMain.handle('get-queue-state', () => ({
@@ -1121,32 +1145,44 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
 
   let meta = { title: null, uploader: null, duration: null, thumbnail: null, playlistCount: null };
   let playlistItems = [];
-  try {
-    const infoArgs = playlist
-      ? [url, '--flat-playlist', '--dump-single-json', '--no-warnings']
-      : [url, '--dump-single-json', '--no-playlist', '--no-warnings'];
-    const infoRaw = await ytDlpWrap.execPromise(infoArgs);
-    const info = JSON.parse(infoRaw);
-    const isPl = info._type === 'playlist' || Array.isArray(info.entries);
+  if (skipProbe) {
+    // Renderer already probed this URL; reuse the result, skip yt-dlp call.
     meta = {
-      title: info.title || null,
-      uploader: info.uploader || info.channel || info.uploader_id || null,
-      duration: info.duration || null,
-      thumbnail: info.thumbnail || (info.thumbnails && info.thumbnails[info.thumbnails.length - 1]?.url) || null,
-      playlistCount: isPl ? (info.playlist_count || (info.entries && info.entries.length) || null) : null,
+      title: prefetchedMeta.title || null,
+      uploader: prefetchedMeta.uploader || null,
+      duration: prefetchedMeta.duration || null,
+      thumbnail: prefetchedMeta.thumbnail || null,
+      playlistCount: null,
     };
     send('download-meta', meta);
-    if (isPl && playlist && Array.isArray(info.entries)) {
-      playlistItems = info.entries.map((e, i) => ({
-        index: i + 1,
-        title: e.title || e.url || `Item ${i + 1}`,
-        url: e.url || (e.id ? `https://www.youtube.com/watch?v=${e.id}` : null),
-        state: 'pending',
-      }));
-      send('playlist-items', playlistItems);
+  } else {
+    try {
+      const infoArgs = playlist
+        ? [url, '--flat-playlist', '--dump-single-json', '--no-warnings']
+        : [url, '--dump-single-json', '--no-playlist', '--no-warnings'];
+      const infoRaw = await ytDlpWrap.execPromise(infoArgs);
+      const info = JSON.parse(infoRaw);
+      const isPl = info._type === 'playlist' || Array.isArray(info.entries);
+      meta = {
+        title: info.title || null,
+        uploader: info.uploader || info.channel || info.uploader_id || null,
+        duration: info.duration || null,
+        thumbnail: info.thumbnail || (info.thumbnails && info.thumbnails[info.thumbnails.length - 1]?.url) || null,
+        playlistCount: isPl ? (info.playlist_count || (info.entries && info.entries.length) || null) : null,
+      };
+      send('download-meta', meta);
+      if (isPl && playlist && Array.isArray(info.entries)) {
+        playlistItems = info.entries.map((e, i) => ({
+          index: i + 1,
+          title: e.title || e.url || `Item ${i + 1}`,
+          url: e.url || (e.id ? `https://www.youtube.com/watch?v=${e.id}` : null),
+          state: 'pending',
+        }));
+        send('playlist-items', playlistItems);
+      }
+    } catch (err) {
+      console.error('info fetch failed:', err);
     }
-  } catch (err) {
-    console.error('info fetch failed:', err);
   }
 
   const extension = preset.ext;
@@ -1217,6 +1253,41 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
       const lines = lineBuf.split(/\r?\n/);
       lineBuf = lines.pop() || '';
       for (const line of lines) {
+        const trimmed = line.trim();
+
+        // --print before_dl output: "item=<idx>/<total>|<title>"
+        if (trimmed.startsWith('item=')) {
+          const raw = trimmed.slice('item='.length);
+          const [idx, rest] = raw.split('|').length === 2 ? [raw.split('|')[0], raw.split('|').slice(1).join('|')] : [raw, ''];
+          const [cur, total] = (idx || '').split('/');
+          // Mark previous item as failed if it never completed
+          if (lastStartedIndex != null && lastStartedIndex !== lastCompletedIndex) {
+            send('item-state', { index: lastStartedIndex, state: 'error', error: 'Item failed or unavailable' });
+          }
+          currentItem = { index: cur, total, title: rest || '' };
+          send('download-item', currentItem);
+          if (cur && cur !== 'NA') {
+            const n = parseInt(cur, 10);
+            lastStartedIndex = n;
+            send('item-state', { index: n, state: 'downloading', title: rest });
+          }
+          lastPct = 0; // reset per-item
+          lastProgressTs = Date.now();
+          continue;
+        }
+
+        // --print after_move output: "filepath=<absolute path>"
+        if (trimmed.startsWith('filepath=')) {
+          const fp = trimmed.slice('filepath='.length);
+          completed.push(fp);
+          if (currentItem && currentItem.index) {
+            const i = parseInt(currentItem.index, 10);
+            lastCompletedIndex = i;
+            send('item-state', { index: i, state: 'done', filepath: fp });
+          }
+          continue;
+        }
+
         // [download]  33.2% of  2.48MiB at 1.20MiB/s ETA 00:02
         const m = line.match(/\[download\]\s+([\d.]+)%\s+of\s+~?\s*([\d.]+\s*[KMG]?i?B)?(?:\s+at\s+([\d.]+\s*[KMG]?i?B\/s))?(?:\s+ETA\s+([\d:]+))?/);
         if (m) {
@@ -1232,15 +1303,13 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
           broadcastToExtensions({ type: 'progress', percent: pct, eta });
           continue;
         }
-        // Post-processing phase — send a status nudge so user sees something is happening
+
+        // Post-processing phase — nudge the status so the user sees activity
         if (/\[ExtractAudio\]|\[ffmpeg\]|\[Merger\]/i.test(line)) {
           lastProgressTs = Date.now();
-          send('download-status', line.trim().slice(0, 160));
+          send('download-status', trimmed.slice(0, 160));
           const d = activeDownloads.get(downloadId);
           if (d) { d.speed = 'Converting…'; d.eta = ''; broadcastQueue(); }
-        }
-        if (line.startsWith('after_move:filepath=')) {
-          // Handled already via ytDlpEvent; ignore duplicate here.
           continue;
         }
       }
