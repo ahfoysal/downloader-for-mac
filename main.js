@@ -762,6 +762,42 @@ ipcMain.handle('file-exists', (_e, filepath) => {
   try { return !!filepath && fs.existsSync(filepath); } catch (_) { return false; }
 });
 
+// Persistent probe cache: survives app restarts so common URLs
+// (recently-watched YouTube videos) hit instant on re-probe.
+const probeCachePath = path.join(userData, 'probe-cache.json');
+function loadProbeCache() {
+  try {
+    if (!fs.existsSync(probeCachePath)) return {};
+    const raw = JSON.parse(fs.readFileSync(probeCachePath, 'utf8'));
+    const now = Date.now();
+    // Evict entries older than 24h
+    const fresh = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (v && v.ts && (now - v.ts) < 24 * 60 * 60 * 1000) fresh[k] = v;
+    }
+    return fresh;
+  } catch (_) { return {}; }
+}
+function saveProbeCache(cache) {
+  try { fs.writeFileSync(probeCachePath, JSON.stringify(cache)); } catch (_) {}
+}
+ipcMain.handle('probe-cache-get', (_e, url) => {
+  const cache = loadProbeCache();
+  return cache[url] ? cache[url].data : null;
+});
+ipcMain.handle('probe-cache-set', (_e, { url, data }) => {
+  if (!url || !data) return;
+  const cache = loadProbeCache();
+  cache[url] = { ts: Date.now(), data };
+  // Cap at 500 entries (LRU-ish: drop oldest on overflow)
+  const keys = Object.keys(cache);
+  if (keys.length > 500) {
+    const sorted = keys.map((k) => [k, cache[k].ts]).sort((a, b) => a[1] - b[1]);
+    for (let i = 0; i < keys.length - 500; i++) delete cache[sorted[i][0]];
+  }
+  saveProbeCache(cache);
+});
+
 // Scan the download folder and add any untracked media files to history.
 // Called when the Library view opens — catches files yt-dlp wrote but
 // didn't surface via `--print after_move`.
