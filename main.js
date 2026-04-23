@@ -332,6 +332,67 @@ function detectInstalledBrowsers() {
 }
 ipcMain.handle('detect-browsers', () => detectInstalledBrowsers());
 
+// Return absolute path to an extension folder shipped with the app.
+ipcMain.handle('extension-folder', (_e, browser) => {
+  const base = app.isPackaged
+    ? path.join(process.resourcesPath, 'browser-extension')
+    : path.join(__dirname, 'browser-extension');
+  const sub = browser || 'chrome';
+  return path.join(base, sub);
+});
+
+// Launch a browser's extensions page + reveal the unpacked folder.
+ipcMain.handle('open-extension-installer', async (_e, browser) => {
+  const folderBase = app.isPackaged
+    ? path.join(process.resourcesPath, 'browser-extension')
+    : path.join(__dirname, 'browser-extension');
+  const { execFile } = require('child_process');
+
+  const targets = {
+    chrome:   { app: 'Google Chrome',        url: 'chrome://extensions/',       folder: 'chrome' },
+    brave:    { app: 'Brave Browser',        url: 'brave://extensions/',        folder: 'chrome' },
+    edge:     { app: 'Microsoft Edge',       url: 'edge://extensions/',         folder: 'chrome' },
+    arc:      { app: 'Arc',                  url: 'chrome://extensions/',       folder: 'chrome' },
+    vivaldi:  { app: 'Vivaldi',              url: 'vivaldi://extensions/',      folder: 'chrome' },
+    firefox:  { app: 'Firefox',              url: 'about:debugging#/runtime/this-firefox', folder: 'firefox' },
+    safari:   { app: 'Safari',               url: 'https://support.apple.com/guide/safari/use-extensions-sfri32508/mac', folder: 'safari' },
+  };
+  const t = targets[browser];
+  if (!t) return { ok: false, error: 'Unknown browser' };
+  const folderPath = path.join(folderBase, t.folder);
+
+  // Reveal the unpacked extension folder in Finder
+  shell.showItemInFolder(folderPath);
+
+  // Open the browser at its extensions page
+  return new Promise((resolve) => {
+    execFile('open', ['-a', t.app, t.url], (err) => {
+      if (err) resolve({ ok: false, error: err.message, folderPath });
+      else resolve({ ok: true, folderPath });
+    });
+  });
+});
+
+// Attempt truly auto-loading via --load-extension (Chromium only, session-only).
+ipcMain.handle('launch-with-extension', async (_e, browser) => {
+  const folderBase = app.isPackaged
+    ? path.join(process.resourcesPath, 'browser-extension')
+    : path.join(__dirname, 'browser-extension');
+  const { execFile } = require('child_process');
+  const paths = {
+    chrome:  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    brave:   '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+    edge:    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    arc:     '/Applications/Arc.app/Contents/MacOS/Arc',
+    vivaldi: '/Applications/Vivaldi.app/Contents/MacOS/Vivaldi',
+  };
+  const bin = paths[browser];
+  if (!bin || !fs.existsSync(bin)) return { ok: false, error: 'Browser not found' };
+  const folder = path.join(folderBase, 'chrome');
+  execFile(bin, [`--load-extension=${folder}`], { detached: true }, () => {});
+  return { ok: true, note: 'Launched browser with extension loaded (session only).' };
+});
+
 // Disk space check (returns GB free, or null if unknown).
 function diskFreeGB(dir) {
   try {

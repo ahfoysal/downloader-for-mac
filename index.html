@@ -711,6 +711,26 @@
   </style>
 </head>
 <body>
+  <div class="modal" id="installerModal">
+    <div class="modal-body">
+      <h2>Install the browser extension</h2>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;">
+        Click your browser to open its Extensions page and Finder with the unpacked extension ready to drag-drop.
+      </div>
+      <div id="installerList" style="display:flex;flex-direction:column;gap:8px;"></div>
+      <div style="margin-top:14px;padding:10px;background:var(--panel-2);border-radius:8px;font-size:11px;color:var(--muted);line-height:1.5;">
+        <strong>Steps after clicking:</strong><br>
+        1. Your browser opens at its Extensions page<br>
+        2. Finder shows the <code>chrome/</code> or <code>firefox/</code> folder — <strong>drag it onto the Extensions page</strong><br>
+        3. Enable Developer mode first (Chrome) or click "Load Temporary Add-on" (Firefox)<br>
+        4. Done — the banner up top flips to "✓ Connected"
+      </div>
+      <div class="action-btns" style="margin-top:18px;">
+        <button id="installerCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal" id="settingsModal">
     <div class="modal-body">
       <h2>Settings</h2>
@@ -756,9 +776,11 @@
     </div>
   </div>
 
-  <button class="sidebar-toggle" id="showSidebarBtn" title="Show history (⌘/)">☰</button>
+  <button class="sidebar-toggle" id="showSidebarBtn" title="History (⌘/)">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"></path><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"></path><path d="M12 7v5l4 2"></path></svg>
+  </button>
 
-  <div class="app" id="appRoot">
+  <div class="app no-sidebar" id="appRoot">
     <div class="main">
       <h1>Downloader for Mac
         <button class="icon-btn" id="settingsBtn" title="Settings (⌘,)">⚙︎</button>
@@ -1703,29 +1725,66 @@
       extBanner.classList.add('hidden');
     });
 
-    extInstallBtn.addEventListener('click', () => {
-      const msg = `Install the browser extension (dev mode):
+    const installerModal = $('installerModal');
+    const installerList = $('installerList');
+    const installerCloseBtn = $('installerCloseBtn');
 
-CHROME / EDGE / BRAVE / ARC / VIVALDI:
-1. Open chrome://extensions
-2. Toggle Developer mode (top-right)
-3. Click "Load unpacked"
-4. Pick this folder:
-   browser-extension/chrome/
+    const BROWSER_LABELS = {
+      chrome:  { name: 'Google Chrome',  emoji: '🟢', launchable: true },
+      brave:   { name: 'Brave',          emoji: '🦁', launchable: true },
+      edge:    { name: 'Microsoft Edge', emoji: '🔷', launchable: true },
+      arc:     { name: 'Arc',            emoji: '🔵', launchable: true },
+      vivaldi: { name: 'Vivaldi',        emoji: '🟥', launchable: true },
+      firefox: { name: 'Firefox',        emoji: '🦊', launchable: false },
+      safari:  { name: 'Safari',         emoji: '🧭', launchable: false, note: 'requires Xcode wrap' },
+    };
 
-FIREFOX:
-1. Open about:debugging#/runtime/this-firefox
-2. Click "Load Temporary Add-on…"
-3. Pick:
-   browser-extension/firefox/manifest.json
+    async function openInstaller() {
+      const installed = await window.electronAPI.detectBrowsers();
+      const all = ['chrome', 'brave', 'edge', 'arc', 'vivaldi', 'firefox', 'safari'];
+      installerList.innerHTML = all.map((b) => {
+        const meta = BROWSER_LABELS[b];
+        const present = installed.includes(b);
+        const disabled = !present;
+        return `
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:${present ? 'var(--panel)' : 'transparent'};border:1px solid var(--border);border-radius:8px;opacity:${present ? 1 : 0.4};">
+            <span style="font-size:18px;">${meta.emoji}</span>
+            <div style="flex:1;">
+              <div style="font-size:13px;font-weight:500;">${meta.name}</div>
+              <div style="font-size:10px;color:var(--muted);">${present ? 'Installed' : 'Not found'}${meta.note ? ' — ' + meta.note : ''}</div>
+            </div>
+            ${meta.launchable && present
+              ? `<button data-auto="${b}" style="padding:6px 10px;font-size:11px;">Auto-load</button>`
+              : ''}
+            <button class="secondary" data-install="${b}" ${disabled ? 'disabled' : ''} style="padding:6px 10px;font-size:11px;">Open</button>
+          </div>
+        `;
+      }).join('');
+      installerModal.classList.add('show');
+    }
 
-SAFARI:
-See browser-extension/README.md (Xcode wrap required)
-
-The full path to the extensions folder has been copied to your clipboard.`;
-      navigator.clipboard.writeText('/Users/foysal/Downloads/youtube-music-download/browser-extension/').catch(() => {});
-      alert(msg);
+    installerList.addEventListener('click', async (ev) => {
+      const openBtn = ev.target.closest('[data-install]');
+      const autoBtn = ev.target.closest('[data-auto]');
+      if (autoBtn) {
+        const b = autoBtn.dataset.auto;
+        const res = await window.electronAPI.launchWithExtension(b);
+        if (res.ok) toast(`Launched ${BROWSER_LABELS[b].name} with extension`, 'success');
+        else toast(res.error || 'Could not launch', 'error');
+        return;
+      }
+      if (openBtn) {
+        const b = openBtn.dataset.install;
+        const res = await window.electronAPI.openExtensionInstaller(b);
+        if (res.ok) toast(`Opened ${BROWSER_LABELS[b].name}. Drag the folder from Finder onto the Extensions page.`, 'success');
+        else toast(res.error || 'Could not open', 'error');
+      }
     });
+
+    installerCloseBtn.addEventListener('click', () => installerModal.classList.remove('show'));
+    installerModal.addEventListener('click', (e) => { if (e.target === installerModal) installerModal.classList.remove('show'); });
+
+    extInstallBtn.addEventListener('click', openInstaller);
 
     window.electronAPI.onExtensionPing((data) => {
       // Re-fetch settings so banner updates
@@ -1748,7 +1807,10 @@ The full path to the extensions folder has been copied to your clipboard.`;
     }
     hideSidebarBtn.addEventListener('click', toggleSidebar);
     showSidebarBtn.addEventListener('click', toggleSidebar);
-    if (localStorage.getItem('sidebarHidden') === '1') appRoot.classList.add('no-sidebar');
+    // Default closed, but respect user preference
+    const stored = localStorage.getItem('sidebarHidden');
+    if (stored === '0') appRoot.classList.remove('no-sidebar');
+    else appRoot.classList.add('no-sidebar');
 
     // Keyboard shortcut ⌘/
     document.addEventListener('keydown', (e) => {
