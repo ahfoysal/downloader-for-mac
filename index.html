@@ -1250,6 +1250,214 @@
       margin-left: 4px;
     }
 
+    /* ============ Mini player bar (Spotify-style) ============ */
+    .mini-player {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 64px;
+      background: rgba(16, 16, 22, 0.96);
+      backdrop-filter: blur(18px);
+      border-top: 1px solid var(--border);
+      display: none;
+      align-items: center;
+      gap: 12px;
+      padding: 0 14px 0 14px;
+      z-index: 200;
+      transition: transform var(--t-med) var(--ease), opacity var(--t-med) var(--ease);
+    }
+    .mini-player.show { display: flex; animation: miniIn 0.3s var(--ease); }
+    @keyframes miniIn {
+      from { transform: translateY(100%); opacity: 0; }
+      to { transform: none; opacity: 1; }
+    }
+    .mini-prog {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: transparent;
+      cursor: pointer;
+    }
+    .mini-prog:hover { height: 5px; }
+    .mini-prog-fill {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 0.15s linear;
+    }
+    .mini-thumb-wrap {
+      position: relative;
+      width: 48px;
+      height: 48px;
+      border-radius: 6px;
+      overflow: hidden;
+      flex-shrink: 0;
+      background: var(--surface-2);
+    }
+    .mini-thumb {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      display: none;
+    }
+    .mini-thumb.show { display: block; }
+    .mini-thumb-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+    }
+    .mini-thumb.show + .mini-thumb-placeholder { display: none; }
+    .mini-info {
+      flex: 1;
+      min-width: 0;
+      cursor: pointer;
+    }
+    .mini-title {
+      font-size: 12.5px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 2px;
+    }
+    .mini-artist {
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .mini-controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .mini-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all var(--t-fast);
+    }
+    .mini-btn:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+    .mini-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .mini-play-btn {
+      background: var(--accent);
+      color: #000;
+      width: 32px;
+      height: 32px;
+    }
+    .mini-play-btn:hover { background: var(--accent-strong); color: #fff; }
+    .mini-time {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      min-width: 76px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .mini-close { margin-left: 4px; }
+
+    /* Adjust view padding so mini-player doesn't cover content */
+    body.mini-active .view { padding-bottom: 88px; }
+
+    /* ============ Expanded player ============ */
+    .player {
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 10, 12, 0.96);
+      backdrop-filter: blur(24px);
+      z-index: 500;
+      display: none;
+      flex-direction: column;
+      animation: fadeIn 0.2s var(--ease);
+    }
+    .player.show { display: flex; }
+
+    /* Up-next queue in expanded player */
+    .player-queue {
+      margin-top: 22px;
+      max-height: 240px;
+      overflow-y: auto;
+      width: 100%;
+      max-width: 460px;
+    }
+    .player-queue-head {
+      font-size: 10.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    .pq-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background var(--t-fast);
+    }
+    .pq-item:hover { background: var(--surface); }
+    .pq-item.playing { background: var(--accent-soft); }
+    .pq-item .pq-thumb {
+      width: 36px;
+      height: 36px;
+      border-radius: 4px;
+      object-fit: cover;
+      background: var(--surface-2);
+      flex-shrink: 0;
+    }
+    .pq-item .pq-title {
+      flex: 1;
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .pq-item .pq-artist {
+      font-size: 11px;
+      color: var(--text-muted);
+      min-width: 100px;
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .pq-item.playing .pq-title { color: var(--accent); font-weight: 600; }
+
+    /* Collapse button at bottom of expanded player */
+    .player-collapse {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all var(--t-fast);
+      z-index: 502;
+    }
+    .player-collapse:hover { color: var(--text); background: var(--surface-3); }
+
     #playerAudio { display: none; }
 
     /* ============ Modals ============ */
@@ -1654,17 +1862,43 @@
     </div>
   </div>
 
-  <!-- ============ Player ============ -->
+  <!-- ============ Mini Player (always visible when something is loaded) ============ -->
+  <div class="mini-player" id="miniPlayer">
+    <div class="mini-prog"><div class="mini-prog-fill" id="miniProgFill"></div></div>
+    <div class="mini-thumb-wrap">
+      <img class="mini-thumb" id="miniThumb" />
+      <div class="mini-thumb-placeholder" id="miniThumbPlaceholder">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+      </div>
+    </div>
+    <div class="mini-info" id="miniInfo">
+      <div class="mini-title" id="miniTitle">—</div>
+      <div class="mini-artist" id="miniArtist"></div>
+    </div>
+    <div class="mini-controls">
+      <button class="mini-btn" id="miniPrev" title="Previous (⌘←)">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><rect x="5" y="4" width="2" height="16"/></svg>
+      </button>
+      <button class="mini-btn mini-play-btn" id="miniPlay" title="Play/Pause (Space)">
+        <svg id="miniPlayIcon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+      </button>
+      <button class="mini-btn" id="miniNext" title="Next (⌘→)">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><rect x="17" y="4" width="2" height="16"/></svg>
+      </button>
+    </div>
+    <div class="mini-time" id="miniTime">0:00 / 0:00</div>
+    <button class="mini-btn mini-expand" id="miniExpand" title="Expand (F)">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+    </button>
+    <button class="mini-btn mini-close" id="miniClose" title="Close player (Esc)">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+
+  <!-- ============ Expanded Player (slides up from mini) ============ -->
   <div class="player" id="player">
     <div class="player-head">
-      <button class="nav-icon-btn" id="playerClose" title="Back to library (Esc)">
-        <svg class="ico" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
-      </button>
-      <span class="back-label">Library</span>
       <div class="player-title-bar" id="playerTitle" style="text-align:center;"></div>
-      <button class="nav-icon-btn" id="playerCloseX" title="Close (Esc)">
-        <svg class="ico" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
     </div>
     <div class="player-body" id="playerBody">
       <!-- Unified player: audio + video share the same music-player UI -->
@@ -1711,6 +1945,14 @@
           </div>
         </div>
       </div>
+
+      <!-- Up next queue, visible in expanded player -->
+      <div class="player-queue" id="playerQueue"></div>
+
+      <!-- Collapse back to mini (at bottom so it's not behind traffic lights) -->
+      <button class="player-collapse" id="playerCollapse" title="Collapse (Esc)">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
     </div>
   </div>
 

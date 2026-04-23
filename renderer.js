@@ -636,8 +636,15 @@ async function playFile(filepath, title, entry) {
   musicArtist.textContent = (match && match.uploader) || (match && match.playlist) || '';
   await loadResumePosition(playerVideo, filepath);
   try { await playerVideo.play(); } catch (_) {}
-  player.classList.add('show');
+  // Always show the mini-player. Only open expanded view on first play of a session.
+  syncMini();
+  renderQueueList();
+  if (!sessionStarted) {
+    sessionStarted = true;
+    player.classList.add('show');
+  }
 }
+let sessionStarted = false;
 
 async function loadResumePosition(el, filepath) {
   const saved = await api.getPlayPosition(filepath);
@@ -733,17 +740,137 @@ function closePlayer() {
   playerVideo.removeAttribute('src');
   playerVideo.load();
   player.classList.remove('show');
+  $('miniPlayer').classList.remove('show');
+  document.body.classList.remove('mini-active');
   currentPlaying = null;
 }
-$('playerClose').addEventListener('click', closePlayer);
-$('playerCloseX').addEventListener('click', closePlayer);
+// Expanded player → collapse to mini
+function collapsePlayer() {
+  player.classList.remove('show');
+  renderQueueList(); // keep fresh for next expand
+}
+function expandPlayer() {
+  player.classList.add('show');
+  renderQueueList();
+}
+$('playerCollapse').addEventListener('click', collapsePlayer);
+
 document.addEventListener('keydown', (e) => {
-  if (!player.classList.contains('show')) return;
-  if (e.key === 'Escape') closePlayer();
-  else if (e.key === ' ' && e.target.tagName !== 'INPUT') { e.preventDefault(); musicPlayBtn.click(); }
-  else if (e.key === 'ArrowLeft') musicBack15.click();
-  else if (e.key === 'ArrowRight') musicFwd15.click();
+  const playing = currentPlaying != null;
+  const expanded = player.classList.contains('show');
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'Escape') {
+    if (expanded) collapsePlayer();
+    return;
+  }
+  if (!playing) return;
+  if (e.key === ' ') { e.preventDefault(); musicPlayBtn.click(); }
+  else if (e.key === 'ArrowLeft' && !(e.metaKey || e.ctrlKey)) musicBack15.click();
+  else if (e.key === 'ArrowRight' && !(e.metaKey || e.ctrlKey)) musicFwd15.click();
+  else if ((e.metaKey || e.ctrlKey) && e.key === 'ArrowLeft') musicPrev.click();
+  else if ((e.metaKey || e.ctrlKey) && e.key === 'ArrowRight') musicNext.click();
+  else if (e.key.toLowerCase() === 'f') { expanded ? collapsePlayer() : expandPlayer(); }
 });
+
+// ===== Mini player wiring =====
+const miniPlayer = $('miniPlayer');
+const miniThumb = $('miniThumb');
+const miniThumbPlaceholder = $('miniThumbPlaceholder');
+const miniTitle = $('miniTitle');
+const miniArtist = $('miniArtist');
+const miniPlay = $('miniPlay');
+const miniPlayIcon = $('miniPlayIcon');
+const miniPrev = $('miniPrev');
+const miniNext = $('miniNext');
+const miniTime = $('miniTime');
+const miniExpand = $('miniExpand');
+const miniClose = $('miniClose');
+const miniProg = document.querySelector('.mini-prog');
+const miniProgFill = $('miniProgFill');
+
+function syncMini() {
+  if (!currentPlaying) return;
+  const match = state.history.find((e) => e.filepath === currentPlaying);
+  const title = (match && match.title) || currentPlaying.split('/').pop().replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+  const artist = (match && (match.uploader || match.playlist)) || '';
+  const thumb = (match && match.thumbnail) || null;
+  miniTitle.textContent = title;
+  miniArtist.textContent = artist;
+  if (thumb) {
+    miniThumb.src = thumb;
+    miniThumb.classList.add('show');
+  } else {
+    miniThumb.classList.remove('show');
+    miniThumb.removeAttribute('src');
+  }
+  miniPlayer.classList.add('show');
+  document.body.classList.add('mini-active');
+  updateNavButtons();
+}
+
+miniPlay.addEventListener('click', () => musicPlayBtn.click());
+miniPrev.addEventListener('click', () => musicPrev.click());
+miniNext.addEventListener('click', () => musicNext.click());
+miniExpand.addEventListener('click', expandPlayer);
+miniInfoClick();
+function miniInfoClick() {
+  // Clicking the thumb or info area also expands
+  $('miniInfo').addEventListener('click', expandPlayer);
+  $('miniThumb').addEventListener('click', expandPlayer);
+  $('miniThumbPlaceholder').addEventListener('click', expandPlayer);
+}
+miniClose.addEventListener('click', closePlayer);
+
+// Scrub by clicking mini-bar progress strip
+miniProg.addEventListener('click', (e) => {
+  if (!playerVideo.duration) return;
+  const r = miniProg.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+  playerVideo.currentTime = ratio * playerVideo.duration;
+});
+
+playerVideo.addEventListener('timeupdate', () => {
+  if (!playerVideo.duration) return;
+  const pct = (playerVideo.currentTime / playerVideo.duration) * 100;
+  miniProgFill.style.width = pct + '%';
+  miniTime.textContent = fmtTime(playerVideo.currentTime) + ' / ' + fmtTime(playerVideo.duration);
+});
+playerVideo.addEventListener('play', () => {
+  miniPlayIcon.innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+});
+playerVideo.addEventListener('pause', () => {
+  miniPlayIcon.innerHTML = '<polygon points="6 4 20 12 6 20 6 4"/>';
+});
+
+// Queue list in expanded player
+function renderQueueList() {
+  const list = $('playerQueue');
+  if (!list) return;
+  if (playlistForPlayer.length <= 1) { list.innerHTML = ''; return; }
+  const rows = playlistForPlayer.map((e, i) => {
+    const title = e.title || 'Untitled';
+    const artist = e.uploader || '';
+    const thumb = e.thumbnail
+      ? `<img class="pq-thumb" src="${e.thumbnail}" />`
+      : `<div class="pq-thumb"></div>`;
+    return `<div class="pq-item ${i === playerIdx ? 'playing' : ''}" data-idx="${i}">
+      ${thumb}
+      <div class="pq-title">${(i === playerIdx ? '▶ ' : (i + 1) + '. ') + title.replace(/</g, '&lt;')}</div>
+      <div class="pq-artist">${artist.replace(/</g, '&lt;')}</div>
+    </div>`;
+  }).join('');
+  list.innerHTML = `<div class="player-queue-head">Up next · ${playlistForPlayer.length} items</div>` + rows;
+  list.querySelectorAll('.pq-item').forEach((el) => {
+    el.addEventListener('click', () => {
+      const i = parseInt(el.dataset.idx);
+      const entry = playlistForPlayer[i];
+      if (!entry) return;
+      playerIdx = i;
+      playFile(entry.filepath, entry.title, entry);
+    });
+  });
+}
+
 
 // ============ Settings modal ============
 const settingsModal = $('settingsModal');
