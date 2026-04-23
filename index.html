@@ -922,87 +922,153 @@
       vertical-align: -2px;
     }
 
-    /* ============ Library view ============ */
+    /* ============ Library view (Spotify-style) ============ */
     .lib-head {
       display: flex;
       gap: 12px;
       align-items: center;
-      margin-bottom: 20px;
+      margin-bottom: 24px;
     }
-    .lib-head h2 { margin: 0; font-size: 22px; font-weight: 600; flex: 1; }
+    .lib-head h2 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 800;
+      flex: 1;
+      letter-spacing: -0.02em;
+    }
     .lib-search-input {
       background: var(--surface);
       border: 1px solid var(--border);
       color: var(--text);
-      padding: 8px 12px;
-      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      border-radius: 999px;
       font-size: 12.5px;
       outline: none;
-      width: 220px;
+      width: 260px;
     }
-    .lib-search-input:focus { border-color: var(--accent); }
-    .lib-stats { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
+    .lib-search-input:focus { border-color: var(--accent); width: 320px; }
+    .lib-stats { font-size: 12px; color: var(--text-muted); margin-bottom: 18px; }
+
+    .lib-section { margin-bottom: 32px; }
+    .lib-section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .lib-section-head h3 {
+      font-size: 18px;
+      font-weight: 700;
+      margin: 0;
+      letter-spacing: -0.01em;
+    }
+    .lib-section-head .lib-section-count {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
     .lib-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-      gap: 16px;
+      grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+      gap: 20px;
     }
+    .lib-row {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 170px;
+      gap: 16px;
+      overflow-x: auto;
+      padding-bottom: 10px;
+      scroll-snap-type: x mandatory;
+    }
+    .lib-row::-webkit-scrollbar { height: 8px; }
+    .lib-row .lib-card { scroll-snap-align: start; }
+
     .lib-card {
       background: var(--surface);
-      border: 1px solid var(--border);
       border-radius: var(--radius-md);
       overflow: hidden;
       cursor: pointer;
-      transition: all var(--t-fast);
+      transition: background 0.2s, transform 0.2s;
       position: relative;
+      padding: 12px;
     }
-    .lib-card:hover {
-      border-color: var(--accent);
-      transform: translateY(-2px);
-      box-shadow: var(--shadow-md);
-    }
+    .lib-card:hover { background: var(--surface-2); }
     .lib-card.missing { opacity: 0.45; }
+
+    .lib-card-thumb-wrap {
+      position: relative;
+      aspect-ratio: 1/1;
+      border-radius: 8px;
+      overflow: hidden;
+      background: linear-gradient(135deg, var(--surface-2), var(--surface-3));
+      margin-bottom: 12px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+    }
+    .lib-card.video .lib-card-thumb-wrap { aspect-ratio: 16/9; }
     .lib-card-thumb {
-      aspect-ratio: 16/9;
       width: 100%;
-      background: var(--surface-2);
+      height: 100%;
       object-fit: cover;
       display: block;
+      transition: transform 0.3s var(--ease);
     }
+    .lib-card:hover .lib-card-thumb { transform: scale(1.04); }
     .lib-card-thumb-placeholder {
-      aspect-ratio: 16/9;
-      background: linear-gradient(135deg, var(--surface-2), var(--surface-3));
+      position: absolute;
+      inset: 0;
       display: flex;
       align-items: center;
       justify-content: center;
       color: var(--text-dim);
-      font-size: 32px;
     }
+    .lib-card-play {
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #000;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.2s, transform 0.2s, background 0.15s;
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.45);
+      z-index: 2;
+    }
+    .lib-card:hover .lib-card-play { opacity: 1; transform: none; }
+    .lib-card-play:hover { background: var(--accent-strong); color: #fff; transform: scale(1.08); }
+
     .lib-card-resume {
       position: absolute;
-      bottom: 62px;
+      bottom: 0;
       left: 0;
       right: 0;
       height: 3px;
-      background: rgba(0,0,0,0.4);
+      background: rgba(0, 0, 0, 0.4);
     }
-    .lib-card-resume-fill {
-      height: 100%;
-      background: var(--accent);
-    }
-    .lib-card-body { padding: 10px 12px; }
+    .lib-card-resume-fill { height: 100%; background: var(--accent); }
+
     .lib-card-title {
-      font-size: 12.5px;
-      font-weight: 500;
-      line-height: 1.3;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.35;
       display: -webkit-box;
-      -webkit-line-clamp: 2;
+      -webkit-line-clamp: 1;
       -webkit-box-orient: vertical;
       overflow: hidden;
-      margin-bottom: 4px;
+      margin-bottom: 3px;
     }
     .lib-card-meta {
-      font-size: 11px;
+      font-size: 11.5px;
       color: var(--text-muted);
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1566,11 +1632,14 @@
     /* Adjust view padding so mini-player doesn't cover content */
     body.mini-active .view { padding-bottom: 88px; }
 
-    /* ============ Expanded player ============ */
+    /* ============ Expanded player (gradient-backdrop) ============ */
     .player {
       position: fixed;
       inset: 0;
-      background: rgba(10, 10, 12, 0.96);
+      background:
+        radial-gradient(circle at 20% 20%, var(--accent-soft), transparent 55%),
+        radial-gradient(circle at 85% 80%, rgba(0,0,0,0.5), transparent 60%),
+        rgba(10, 10, 12, 0.98);
       backdrop-filter: blur(24px);
       z-index: 500;
       display: none;
@@ -1578,6 +1647,30 @@
       animation: fadeIn 0.2s var(--ease);
     }
     .player.show { display: flex; }
+    .music-view {
+      padding-top: 20px;
+      padding-bottom: 100px;
+    }
+    .music-title { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; }
+    .music-artist { font-size: 13px; color: var(--text-muted); }
+    .music-art-wrap {
+      width: 360px;
+      max-width: 70vmin;
+    }
+    .music-art-wrap.video-mode {
+      width: 640px;
+      max-width: 92vw;
+    }
+    .music-bar { height: 5px; }
+    .music-bar:hover { height: 8px; }
+    .music-bar-fill {
+      background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+    }
+    .music-play {
+      width: 64px;
+      height: 64px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    }
 
     /* Up-next queue in expanded player */
     .player-queue {

@@ -540,32 +540,74 @@ async function renderLibrary() {
     </div>`;
     return;
   }
-  container.innerHTML = `<div class="lib-grid">` + filtered.map((e) => {
+
+  const AUDIO_FORMATS = ['mp3', 'm4a', 'webm', 'flac', 'ogg', 'wav', 'opus', 'aac'];
+  const isAudio = (e) => AUDIO_FORMATS.includes((e.format || '').toLowerCase());
+
+  function renderCard(e) {
     const resume = e._pos && e._pos.duration ? Math.round((e._pos.pos / e._pos.duration) * 100) : 0;
-    const isAudio = ['mp3', 'm4a', 'webm', 'flac', 'ogg', 'wav', 'opus', 'aac'].includes((e.format || '').toLowerCase());
-    const icon = isAudio
-      ? `<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`
-      : `<svg viewBox="0 0 24 24" width="36" height="36" fill="currentColor"><polygon points="8 5 19 12 8 19 8 5"/></svg>`;
+    const audio = isAudio(e);
+    const icon = audio
+      ? `<svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`
+      : `<svg viewBox="0 0 24 24" width="44" height="44" fill="currentColor"><polygon points="8 5 19 12 8 19 8 5"/></svg>`;
     const thumb = e.thumbnail
       ? `<img class="lib-card-thumb" src="${e.thumbnail}" onerror="this.outerHTML='<div class=\\'lib-card-thumb-placeholder\\'>${icon.replace(/'/g, '&apos;').replace(/"/g, '&quot;')}</div>'" />`
       : `<div class="lib-card-thumb-placeholder">${icon}</div>`;
     return `
-      <div class="lib-card ${e._exists ? '' : 'missing'}" data-path="${(e.filepath || '').replace(/"/g, '&quot;')}" data-title="${(e.title || '').replace(/"/g, '&quot;')}">
-        ${thumb}
-        ${resume > 0 && resume < 95 ? `<div class="lib-card-resume"><div class="lib-card-resume-fill" style="width:${resume}%"></div></div>` : ''}
-        <div class="lib-card-body">
-          <div class="lib-card-title">${(e.title || 'Untitled').replace(/</g, '&lt;')}</div>
-          <div class="lib-card-meta">${(e.format || '').toUpperCase()}${e.uploader ? ' · ' + e.uploader : ''}</div>
+      <div class="lib-card ${audio ? 'audio' : 'video'} ${e._exists ? '' : 'missing'}" data-path="${(e.filepath || '').replace(/"/g, '&quot;')}" data-title="${(e.title || '').replace(/"/g, '&quot;')}">
+        <div class="lib-card-thumb-wrap">
+          ${thumb}
+          ${e._exists ? `<button class="lib-card-play" data-play title="Play">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+          </button>` : ''}
+          ${resume > 0 && resume < 95 ? `<div class="lib-card-resume"><div class="lib-card-resume-fill" style="width:${resume}%"></div></div>` : ''}
         </div>
+        <div class="lib-card-title">${(e.title || 'Untitled').replace(/</g, '&lt;')}</div>
+        <div class="lib-card-meta">${(e.format || '').toUpperCase()}${e.uploader ? ' · ' + e.uploader : ''}</div>
       </div>
     `;
-  }).join('') + `</div>`;
+  }
+
+  // Sections: Recently added (horizontal row), Audio, Video
+  const recent = filtered.slice(0, 10);
+  const audios = filtered.filter(isAudio);
+  const videos = filtered.filter((e) => !isAudio(e));
+  let html = '';
+  if (!q && recent.length) {
+    html += `<div class="lib-section">
+      <div class="lib-section-head">
+        <h3>Recently added</h3>
+        <span class="lib-section-count">${recent.length}</span>
+      </div>
+      <div class="lib-row">${recent.map(renderCard).join('')}</div>
+    </div>`;
+  }
+  if (audios.length) {
+    html += `<div class="lib-section">
+      <div class="lib-section-head"><h3>${q ? 'Audio matches' : 'Audio'}</h3><span class="lib-section-count">${audios.length}</span></div>
+      <div class="lib-grid">${audios.map(renderCard).join('')}</div>
+    </div>`;
+  }
+  if (videos.length) {
+    html += `<div class="lib-section">
+      <div class="lib-section-head"><h3>${q ? 'Video matches' : 'Video'}</h3><span class="lib-section-count">${videos.length}</span></div>
+      <div class="lib-grid">${videos.map(renderCard).join('')}</div>
+    </div>`;
+  }
+  container.innerHTML = html;
+
   container.querySelectorAll('.lib-card').forEach((card) => {
-    card.addEventListener('click', () => {
+    const go = () => {
       const path = card.dataset.path;
       if (!path || card.classList.contains('missing')) return;
       playFile(path, card.dataset.title);
+    };
+    card.addEventListener('click', (ev) => {
+      if (ev.target.closest('[data-play]')) return; // play btn has its own handler below
+      go();
     });
+    const playBtn = card.querySelector('[data-play]');
+    if (playBtn) playBtn.addEventListener('click', (ev) => { ev.stopPropagation(); go(); });
     card.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       if (card.dataset.path) api.revealFile(card.dataset.path);
