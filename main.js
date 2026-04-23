@@ -22,9 +22,20 @@ const ytDlpBundledPath = app.isPackaged
 function activeYtDlpPath() {
   return fs.existsSync(ytDlpOverridePath) ? ytDlpOverridePath : ytDlpBundledPath;
 }
-const ffmpegPath = app.isPackaged
-  ? path.join(process.resourcesPath, `ffmpeg${EXE}`)
-  : path.join(__dirname, 'bin', `ffmpeg${EXE}`);
+function resolveFfmpegPath() {
+  const candidates = app.isPackaged
+    ? [
+        path.join(process.resourcesPath, `ffmpeg${EXE}`),
+        path.join(process.resourcesPath, `ffmpeg-${process.arch}${EXE}`),
+      ]
+    : [
+        path.join(__dirname, 'bin', `ffmpeg-${process.arch}${EXE}`),
+        path.join(__dirname, 'bin', `ffmpeg${EXE}`),
+      ];
+  for (const p of candidates) if (fs.existsSync(p)) return p;
+  return candidates[0];
+}
+const ffmpegPath = resolveFfmpegPath();
 
 // Format presets — keep main.js as source of truth, expose to renderer.
 const FORMAT_PRESETS = {
@@ -164,6 +175,42 @@ ipcMain.handle('update-settings', (_e, patch) => {
   appSettings = { ...appSettings, ...patch };
   saveSettings();
   return { ...appSettings };
+});
+
+ipcMain.handle('probe-formats', async (_e, url) => {
+  if (!url) return { ok: false, error: 'no url' };
+  try {
+    const args = ['--dump-single-json', '--no-playlist', '--no-warnings', url];
+    const raw = await ytDlpWrap.execPromise(args);
+    const info = JSON.parse(raw);
+    const formats = (info.formats || [])
+      .filter((f) => f.url && f.protocol && f.protocol !== 'mhtml')
+      .map((f) => ({
+        format_id: f.format_id,
+        ext: f.ext,
+        height: f.height || null,
+        width: f.width || null,
+        fps: f.fps || null,
+        vcodec: f.vcodec === 'none' ? null : f.vcodec,
+        acodec: f.acodec === 'none' ? null : f.acodec,
+        abr: f.abr || null,
+        vbr: f.vbr || null,
+        tbr: f.tbr || null,
+        filesize: f.filesize || f.filesize_approx || null,
+        format_note: f.format_note || '',
+        container: f.container || f.ext || '',
+      }));
+    return {
+      ok: true,
+      title: info.title,
+      uploader: info.uploader || info.channel || null,
+      duration: info.duration || null,
+      thumbnail: info.thumbnail || null,
+      formats,
+    };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
 ipcMain.handle('update-ytdlp', async (event) => {
@@ -316,7 +363,7 @@ ipcMain.on('cancel-download', () => {
   }
 });
 
-ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, cookiesBrowser }) => {
+ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, cookiesBrowser, formatId, startTime, endTime, resume }) => {
   if (!selectedDownloadFolder) {
     return event.sender.send('download-error', 'No folder selected. Please select a download folder first.');
   }
@@ -366,9 +413,14 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
     )
     .replace(/\\/g, '/');
 
+  // If a specific format_id was picked, override the preset's -f flag.
+  const presetArgs = formatId
+    ? preset.args.filter((a, i, arr) => a !== '-f' && arr[i - 1] !== '-f').concat(['-f', `${formatId}+ba/${formatId}/b`])
+    : preset.args;
+
   const args = [
     url,
-    ...preset.args,
+    ...presetArgs,
     '-o', outputTemplate,
     '--newline',
     '--progress',
@@ -380,11 +432,17 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
     '--embed-thumbnail',
   ];
 
+  if (resume !== false) args.push('--continue');
   if (subtitles && preset.kind === 'video') {
     args.push('--write-subs', '--write-auto-subs', '--sub-langs', 'en.*,en', '--embed-subs', '--convert-subs', 'srt');
   }
   if (cookiesBrowser && cookiesBrowser !== 'none') {
     args.push('--cookies-from-browser', cookiesBrowser);
+  }
+  if (startTime || endTime) {
+    const s = startTime || '0:00';
+    const e = endTime || 'inf';
+    args.push('--download-sections', `*${s}-${e}`);
   }
   if (!playlist) args.push('--no-playlist');
   if (playlist) args.push('--ignore-errors');
