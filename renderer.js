@@ -73,14 +73,78 @@ urlInput.addEventListener('keydown', (e) => {
   }
 });
 
+// Track URLs we've already asked about to avoid repeating the prompt on every keystroke
+const playlistAsked = new Map(); // url -> 'single' | 'playlist'
+
+function isPlaylistUrl(u) {
+  return /[?&]list=[^&]+/i.test(u) || /\/playlist\?/.test(u) || /\/channel\//.test(u) || /\/@[\w.-]+\/?$/.test(u);
+}
+
 function detectPlaylistUrl() {
   const u = state.urlInput;
   if (!/^https?:\/\//i.test(u)) return;
-  const looksLikePlaylist = /[?&]list=[^&]+/i.test(u) || /\/playlist\?/.test(u) || /\/channel\//.test(u);
-  if (looksLikePlaylist && !$('optPlaylist').checked) {
-    $('optPlaylist').checked = true;
-    toast('Playlist detected', 'info');
+  if (!isPlaylistUrl(u)) {
+    $('optPlaylist').checked = false;
+    return;
   }
+  if (playlistAsked.has(u)) {
+    $('optPlaylist').checked = playlistAsked.get(u) === 'playlist';
+    return;
+  }
+  askPlaylistChoice(u).then((choice) => {
+    playlistAsked.set(u, choice);
+    $('optPlaylist').checked = choice === 'playlist';
+  });
+}
+
+// Returns Promise<'single' | 'playlist'>
+function askPlaylistChoice(url) {
+  return new Promise((resolve) => {
+    const existing = document.getElementById('playlistConfirm');
+    if (existing) existing.remove();
+    const dlg = document.createElement('div');
+    dlg.id = 'playlistConfirm';
+    dlg.className = 'modal show';
+    dlg.innerHTML = `
+      <div class="modal-body" style="width:420px;">
+        <div class="modal-head">
+          <h2>Playlist detected</h2>
+          <p>This URL is part of a playlist or channel. What would you like to download?</p>
+        </div>
+        <div class="modal-content">
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <button class="btn btn-primary btn-lg" data-choice="single" style="justify-content:flex-start;padding:14px 16px;">
+              <svg class="ico" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <div style="text-align:left;margin-left:8px;">
+                <div>Only this video</div>
+                <div style="font-size:11px;font-weight:400;opacity:0.7;margin-top:2px;">Download the single video (default)</div>
+              </div>
+            </button>
+            <button class="btn btn-secondary btn-lg" data-choice="playlist" style="justify-content:flex-start;padding:14px 16px;">
+              <svg class="ico" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              <div style="text-align:left;margin-left:8px;">
+                <div>Whole playlist</div>
+                <div style="font-size:11px;font-weight:400;opacity:0.7;margin-top:2px;">Download every video into its own folder</div>
+              </div>
+            </button>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:14px;line-height:1.5;word-break:break-all;">${url.replace(/</g, '&lt;').slice(0, 120)}${url.length > 120 ? '…' : ''}</div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(dlg);
+    function done(choice) {
+      dlg.remove();
+      resolve(choice);
+    }
+    dlg.querySelectorAll('[data-choice]').forEach((btn) => {
+      btn.addEventListener('click', () => done(btn.dataset.choice));
+    });
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) done('single'); });
+    document.addEventListener('keydown', function esc(e) {
+      if (e.key === 'Escape') { document.removeEventListener('keydown', esc); done('single'); }
+    }, { once: true });
+  });
 }
 
 async function analyzeUrl(url) {
@@ -842,7 +906,7 @@ async function openFabSheet(url) {
   backdrop.classList.add('show');
 
   let picked = false;
-  function pick(ev) {
+  async function pick(ev) {
     const chip = ev.target.closest('.fab-sheet-chip');
     if (!chip || picked) return;
     picked = true;
@@ -854,15 +918,24 @@ async function openFabSheet(url) {
     if (chip.dataset.tile === 'video') { $('videoQuality').value = format; $('tileVideo').classList.add('selected'); $('tileAudio').classList.remove('selected'); }
     else { $('audioFormat').value = format; $('tileAudio').classList.add('selected'); $('tileVideo').classList.remove('selected'); }
     closeFabSheet();
+
+    // Playlist confirm for URLs that look like one
+    let playlist = false;
+    if (isPlaylistUrl(url)) {
+      const choice = playlistAsked.has(url) ? playlistAsked.get(url) : await askPlaylistChoice(url);
+      playlistAsked.set(url, choice);
+      playlist = choice === 'playlist';
+    }
+
     const opts = {
-      playlist: /[?&]list=|\/playlist\?|\/channel\//i.test(url),
+      playlist,
       subtitles: $('optSubs').checked,
       cookiesBrowser: $('optCookies').value,
       formatId: null,
       resume: $('optResume').checked,
     };
     api.downloadAudio(url, format, opts);
-    toast(`Downloading ${format.toUpperCase()} — track in Download tab`, 'success');
+    toast(`Downloading ${playlist ? 'playlist' : format.toUpperCase()} — track in Download tab`, 'success');
   }
   videoGrid.addEventListener('click', pick);
   audioGrid.addEventListener('click', pick);
