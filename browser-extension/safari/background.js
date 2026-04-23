@@ -1,21 +1,50 @@
 // background.js — service worker
-// Sends URLs to the Downloader for Mac app via the "downloader://" deep-link protocol.
+// Primary transport: Native Messaging Host (silent, instant).
+// Fallback: downloader:// deep-link via a brief helper tab.
 
+const NATIVE_HOST = 'com.ahfoysal.downloader_for_mac';
 const DEEP_LINK_PREFIX = 'downloader://url/';
+let nativeAvailable = null;   // null=unknown, true/false once probed
 
-function sendToApp(url) {
-  if (!url) return;
-  const deep = DEEP_LINK_PREFIX + encodeURIComponent(url);
-  // Opening the deep link triggers the OS to hand off to Downloader for Mac.
-  // We open it in the CURRENT tab via chrome.tabs.update so no new tab pops up
-  // (and when the app takes over, the tab stays on the original page).
-  // But update() would replace the page — safer: create a brief hidden tab.
-  chrome.tabs.create({ url: deep, active: false }, (tab) => {
-    // Close the helper tab after a second — the OS has already grabbed the link.
-    setTimeout(() => {
-      try { chrome.tabs.remove(tab.id); } catch (_) {}
-    }, 1200);
+function probeNative() {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendNativeMessage(NATIVE_HOST, { type: 'ping' }, (response) => {
+        if (chrome.runtime.lastError || !response) {
+          nativeAvailable = false;
+          resolve(false);
+        } else {
+          nativeAvailable = !!response.pong;
+          resolve(nativeAvailable);
+        }
+      });
+    } catch (_) { nativeAvailable = false; resolve(false); }
   });
+}
+
+function fallbackOpenDeepLink(url) {
+  const deep = DEEP_LINK_PREFIX + encodeURIComponent(url);
+  chrome.tabs.create({ url: deep, active: false }, (tab) => {
+    setTimeout(() => { try { chrome.tabs.remove(tab.id); } catch (_) {} }, 1200);
+  });
+}
+
+async function sendToApp(url) {
+  if (!url) return;
+  // Try native first (silent, no tab). Fall back to deep link tab trick.
+  if (nativeAvailable === null) await probeNative();
+  if (nativeAvailable) {
+    try {
+      chrome.runtime.sendNativeMessage(NATIVE_HOST, { type: 'send', url }, (res) => {
+        if (chrome.runtime.lastError) {
+          nativeAvailable = false;
+          fallbackOpenDeepLink(url);
+        }
+      });
+    } catch (_) { fallbackOpenDeepLink(url); }
+  } else {
+    fallbackOpenDeepLink(url);
+  }
   try {
     chrome.notifications.create({
       type: 'basic',
@@ -25,6 +54,9 @@ function sendToApp(url) {
     });
   } catch (_) {}
 }
+
+// Probe once at startup
+probeNative();
 
 // Context menu on page / link / video
 chrome.runtime.onInstalled.addListener(() => {

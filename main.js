@@ -127,6 +127,19 @@ function buildMenu(win) {
         },
         { type: 'separator' },
         {
+          label: 'Install Native Messaging Host…',
+          click: async () => {
+            try {
+              const results = writeNativeHostManifest();
+              const oks = Object.values(results).filter((r) => r.ok).length;
+              win.webContents.send('notify', `Native host installed for ${oks} browsers. Reload extension to take effect.`);
+            } catch (err) {
+              win.webContents.send('notify', `Install failed: ${err.message}`);
+            }
+          },
+        },
+        { type: 'separator' },
+        {
           label: 'Reset to bundled yt-dlp',
           click: () => {
             try { if (fs.existsSync(ytDlpOverridePath)) fs.unlinkSync(ytDlpOverridePath); } catch (_) {}
@@ -282,6 +295,17 @@ app.whenReady().then(() => {
 
   startWatchFolder();
   startScheduler();
+
+  // Auto-install native host on first launch (idempotent, silent).
+  if (!appSettings.nativeHostInstalled) {
+    try {
+      writeNativeHostManifest();
+      appSettings.nativeHostInstalled = true;
+      saveSettings();
+    } catch (err) {
+      console.error('native host auto-install failed:', err);
+    }
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -331,6 +355,84 @@ function detectInstalledBrowsers() {
   return Object.keys(apps).filter((k) => fs.existsSync(apps[k]));
 }
 ipcMain.handle('detect-browsers', () => detectInstalledBrowsers());
+
+// ===== Native Messaging Host registration =====
+const NATIVE_HOST_NAME = 'com.ahfoysal.downloader_for_mac';
+const EXTENSION_ID = 'jncpnkmhbhhgjcdhgkhdgfoghnkbdnam';
+
+// Directories where Chrome/Chromium-based browsers look for native host manifests.
+function nativeHostDirs() {
+  const home = app.getPath('home');
+  return {
+    chrome:   `${home}/Library/Application Support/Google/Chrome/NativeMessagingHosts`,
+    chromium: `${home}/Library/Application Support/Chromium/NativeMessagingHosts`,
+    brave:    `${home}/Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts`,
+    edge:     `${home}/Library/Application Support/Microsoft Edge/NativeMessagingHosts`,
+    arc:      `${home}/Library/Application Support/Arc/User Data/NativeMessagingHosts`,
+    vivaldi:  `${home}/Library/Application Support/Vivaldi/NativeMessagingHosts`,
+    firefox:  `${home}/Library/Application Support/Mozilla/NativeMessagingHosts`,
+  };
+}
+
+function hostScriptPath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'scripts', 'native-host.js')
+    : path.join(__dirname, 'scripts', 'native-host.js');
+}
+
+function writeNativeHostManifest() {
+  const nodeBin = process.execPath.includes('Electron')
+    ? '/usr/bin/env'  // fall back to env node; packaged Electron binary won't run a plain .js
+    : process.execPath;
+  const hostScript = hostScriptPath();
+  // Use a small wrapper that runs node with our script, since Electron's binary is not node.
+  // We write a tiny shell stub next to the script to handle invocation.
+  const wrapperDir = app.getPath('userData');
+  const wrapperPath = path.join(wrapperDir, 'native-host-wrapper.sh');
+  const wrapperBody = `#!/bin/bash\nexec /usr/bin/env node "${hostScript}" "$@"\n`;
+  fs.writeFileSync(wrapperPath, wrapperBody);
+  fs.chmodSync(wrapperPath, 0o755);
+
+  const chromeManifest = {
+    name: NATIVE_HOST_NAME,
+    description: 'Downloader for Mac native host',
+    path: wrapperPath,
+    type: 'stdio',
+    allowed_origins: [`chrome-extension://${EXTENSION_ID}/`],
+  };
+  const firefoxManifest = {
+    name: NATIVE_HOST_NAME,
+    description: 'Downloader for Mac native host',
+    path: wrapperPath,
+    type: 'stdio',
+    allowed_extensions: ['downloader-for-mac@ahfoysal.dev'],
+  };
+
+  const results = {};
+  const dirs = nativeHostDirs();
+  for (const [browser, dir] of Object.entries(dirs)) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const target = path.join(dir, `${NATIVE_HOST_NAME}.json`);
+      const manifest = browser === 'firefox' ? firefoxManifest : chromeManifest;
+      fs.writeFileSync(target, JSON.stringify(manifest, null, 2));
+      results[browser] = { ok: true, path: target };
+    } catch (err) {
+      results[browser] = { ok: false, error: err.message };
+    }
+  }
+  return results;
+}
+
+ipcMain.handle('install-native-host', () => {
+  try {
+    const results = writeNativeHostManifest();
+    return { ok: true, results };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 
 // Return absolute path to an extension folder shipped with the app.
 ipcMain.handle('extension-folder', (_e, browser) => {

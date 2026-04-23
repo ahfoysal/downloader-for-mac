@@ -3,6 +3,7 @@
   "name": "Send to Downloader for Mac",
   "version": "1.0.0",
   "description": "One-click send YouTube / Vimeo / Twitter / TikTok / 1800+ other video URLs to Downloader for Mac.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAy6JedY6R5r4oPjU5q/E7a+gz2opUYq835bn43zuSOais1Z4Seum2IoXVlKX7ZELG5RCLN8+beTbdf/zBzL2OLsLLdNt2ODuh0FPiU4Dv5+VVGQZZjAal6N6Ok8KZrVfILCgEemZSY+kxYLE+edGN96S8aomqquJralhhKzjk9y9sEQ/pdFAn/oX8iLMOxkxuv+2IQ8fMU4x46hRbkxqnO7xTKzsQCMrtQNBRdDXc5prLR44P5jVYqN9AQAlQkjCm4ppfm1WdQnQvewi7Klde4riatoR9UzP2okcmSeqNnP+3188EWqSD1lZ2xDrrFLOHIZi6pvv37bzRWNUriWLcOwIDAQAB",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -18,10 +19,19 @@
       "48": "icons/icon-48.png"
     }
   },
-  "permissions": ["contextMenus", "activeTab", "tabs", "storage", "notifications"],
+  "permissions": ["contextMenus", "activeTab", "tabs", "storage", "notifications", "webNavigation", "nativeMessaging"],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
   "commands": {
     "send_current_tab": {
       "suggested_key": { "default": "Ctrl+Shift+D", "mac": "Command+Shift+D" },

@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   extensionFolder: (browser) => ipcRenderer.invoke('extension-folder', browser),
   openExtensionInstaller: (browser) => ipcRenderer.invoke('open-extension-installer', browser),
   launchWithExtension: (browser) => ipcRenderer.invoke('launch-with-extension', browser),
+  installNativeHost: () => ipcRenderer.invoke('install-native-host'),
   diskFree: (dir) => ipcRenderer.invoke('disk-free', dir),
   checkDuplicate: (url) => ipcRenderer.invoke('check-duplicate', url),
   pickFolder: (title) => ipcRenderer.invoke('pick-folder', title),
