@@ -1097,7 +1097,15 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
     });
   }
 
-  send('download-status', playlist ? 'Fetching playlist info…' : 'Fetching video info…');
+  // If the renderer has already probed this URL (e.g. the FAB sheet did so
+  // when it opened), skip the redundant yt-dlp --dump-single-json call.
+  // Saves 5-15s per download.
+  const skipProbe = prefetchedMeta && prefetchedMeta.skipProbe && !playlist;
+  if (skipProbe) {
+    send('download-status', 'Starting download…');
+  } else {
+    send('download-status', playlist ? 'Fetching playlist info…' : 'Fetching video info…');
+  }
 
   // Disk space warning (< 500 MB free)
   const freeGB = diskFreeGB(selectedDownloadFolder);

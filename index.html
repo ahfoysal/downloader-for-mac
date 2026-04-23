@@ -1018,12 +1018,217 @@
       align-items: center;
       justify-content: center;
       padding: 24px;
+      position: relative;
     }
     .player-body video {
       max-width: 100%;
       max-height: 100%;
       background: #000;
     }
+
+    /* ============ Music player view ============ */
+    .music-view {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      width: 100%;
+      max-width: 460px;
+      padding: 20px;
+      user-select: none;
+    }
+    .music-view.show { display: flex; }
+
+    .music-art-wrap {
+      position: relative;
+      width: 320px;
+      aspect-ratio: 1/1;
+      max-width: 70vmin;
+      margin-bottom: 4px;
+    }
+    .music-art-glow {
+      position: absolute;
+      inset: -10%;
+      background: radial-gradient(circle, var(--accent-soft), transparent 65%);
+      filter: blur(30px);
+      opacity: 0;
+      transition: opacity 0.4s var(--ease);
+      pointer-events: none;
+    }
+    .music-view.playing .music-art-glow { opacity: 0.8; }
+    .music-art {
+      width: 100%;
+      height: 100%;
+      border-radius: 14px;
+      object-fit: cover;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
+      display: none;
+    }
+    .music-art.show { display: block; animation: artIn 0.3s var(--ease); }
+    @keyframes artIn { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+    .music-art-placeholder {
+      width: 100%;
+      height: 100%;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--surface-2), var(--surface-3));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.7);
+    }
+    .music-art.show + .music-art-placeholder { display: none; }
+
+    .music-info {
+      text-align: center;
+      max-width: 100%;
+    }
+    .music-title {
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.3;
+      margin-bottom: 4px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .music-artist {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .music-bar-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+    }
+    .music-time {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      min-width: 36px;
+      text-align: center;
+    }
+    .music-bar {
+      flex: 1;
+      height: 4px;
+      background: var(--surface-2);
+      border-radius: 999px;
+      cursor: pointer;
+      position: relative;
+      transition: height 0.15s;
+    }
+    .music-bar:hover { height: 6px; }
+    .music-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 999px;
+      width: 0%;
+      transition: width 0.1s linear;
+      pointer-events: none;
+    }
+    .music-bar-handle {
+      position: absolute;
+      top: 50%;
+      width: 12px;
+      height: 12px;
+      background: var(--accent);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      left: 0;
+      opacity: 0;
+      transition: opacity 0.15s;
+      pointer-events: none;
+    }
+    .music-bar:hover .music-bar-handle { opacity: 1; }
+
+    .music-controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+    }
+    .music-btn {
+      background: transparent;
+      border: none;
+      color: var(--text);
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all var(--t-fast);
+    }
+    .music-btn:hover { background: var(--surface-2); }
+    .music-btn:active { transform: scale(0.92); }
+    .music-play {
+      width: 56px;
+      height: 56px;
+      background: var(--accent);
+      color: #000;
+    }
+    .music-play:hover { background: var(--accent-strong); color: #fff; }
+
+    .music-sub-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      margin-top: 2px;
+    }
+    .music-sub-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      font-variant-numeric: tabular-nums;
+    }
+    .music-sub-btn:hover { color: var(--text); border-color: var(--border-strong); }
+    .music-volume {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+    }
+    .music-volume input[type="range"] {
+      width: 80px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    /* Next/Prev track nav buttons beside controls */
+    .music-nav-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all var(--t-fast);
+    }
+    .music-nav-btn:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+    .music-nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    /* Backdrop click hint */
+    .player-head .back-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-left: 4px;
+    }
+
+    #playerAudio { display: none; }
 
     /* ============ Modals ============ */
     .modal {
@@ -1430,13 +1635,63 @@
   <!-- ============ Player ============ -->
   <div class="player" id="player">
     <div class="player-head">
-      <button class="nav-icon-btn" id="playerClose" title="Close">
+      <button class="nav-icon-btn" id="playerClose" title="Back to library (Esc)">
+        <svg class="ico" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <span class="back-label">Library</span>
+      <div class="player-title-bar" id="playerTitle" style="text-align:center;"></div>
+      <button class="nav-icon-btn" id="playerCloseX" title="Close (Esc)">
         <svg class="ico" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
-      <div class="player-title-bar" id="playerTitle"></div>
     </div>
-    <div class="player-body">
-      <video id="playerVideo" controls preload="metadata"></video>
+    <div class="player-body" id="playerBody">
+      <!-- VIDEO VIEW -->
+      <video id="playerVideo" controls preload="metadata" class="hidden"></video>
+
+      <!-- AUDIO VIEW: music-player style -->
+      <div class="music-view" id="musicView">
+        <div class="music-art-wrap">
+          <div class="music-art-glow"></div>
+          <img class="music-art" id="musicArt" />
+          <div class="music-art-placeholder" id="musicArtPlaceholder">
+            <svg viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+          </div>
+        </div>
+        <div class="music-info">
+          <div class="music-title" id="musicTitle">—</div>
+          <div class="music-artist" id="musicArtist">—</div>
+        </div>
+        <div class="music-bar-row">
+          <span class="music-time" id="musicCurTime">0:00</span>
+          <div class="music-bar" id="musicBar"><div class="music-bar-fill" id="musicBarFill"></div><div class="music-bar-handle" id="musicBarHandle"></div></div>
+          <span class="music-time" id="musicTotalTime">0:00</span>
+        </div>
+        <div class="music-controls">
+          <button class="music-nav-btn" id="musicPrev" title="Previous track">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><rect x="5" y="4" width="2" height="16"/></svg>
+          </button>
+          <button class="music-btn" id="musicBack15" title="Back 15s">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/><text x="12" y="17" font-size="8" fill="currentColor" stroke="none" text-anchor="middle">15</text></svg>
+          </button>
+          <button class="music-btn music-play" id="musicPlayBtn" title="Play/Pause">
+            <svg id="musicPlayIcon" viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+          </button>
+          <button class="music-btn" id="musicFwd15" title="Forward 15s">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/><text x="12" y="17" font-size="8" fill="currentColor" stroke="none" text-anchor="middle">15</text></svg>
+          </button>
+          <button class="music-nav-btn" id="musicNext" title="Next track">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><rect x="17" y="4" width="2" height="16"/></svg>
+          </button>
+        </div>
+        <div class="music-sub-controls">
+          <button class="music-sub-btn" id="musicSpeedBtn" title="Playback speed">1×</button>
+          <div class="music-volume">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+            <input type="range" id="musicVolume" min="0" max="100" value="100" />
+          </div>
+        </div>
+        <audio id="playerAudio" preload="metadata"></audio>
+      </div>
     </div>
   </div>
 

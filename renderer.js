@@ -549,39 +549,208 @@ async function renderLibrary() {
 // ============ Player ============
 const player = $('player');
 const playerVideo = $('playerVideo');
+const playerAudio = $('playerAudio');
+const musicView = $('musicView');
 const playerTitle = $('playerTitle');
-let currentPlaying = null;
 
-async function playFile(filepath, title) {
+const musicArt = $('musicArt');
+const musicArtPlaceholder = $('musicArtPlaceholder');
+const musicTitle = $('musicTitle');
+const musicArtist = $('musicArtist');
+const musicPlayBtn = $('musicPlayBtn');
+const musicPlayIcon = $('musicPlayIcon');
+const musicBar = $('musicBar');
+const musicBarFill = $('musicBarFill');
+const musicBarHandle = $('musicBarHandle');
+const musicCurTime = $('musicCurTime');
+const musicTotalTime = $('musicTotalTime');
+const musicBack15 = $('musicBack15');
+const musicFwd15 = $('musicFwd15');
+const musicPrev = $('musicPrev');
+const musicNext = $('musicNext');
+const musicVolume = $('musicVolume');
+const musicSpeedBtn = $('musicSpeedBtn');
+
+let currentPlaying = null;
+let currentIsAudio = false;
+let playlistForPlayer = [];
+let playerIdx = -1;
+
+const AUDIO_EXTS = ['mp3', 'm4a', 'webm', 'flac', 'ogg', 'wav', 'opus', 'aac'];
+
+function isAudioFile(filepath) {
+  const ext = (filepath.split('.').pop() || '').toLowerCase();
+  return AUDIO_EXTS.includes(ext);
+}
+
+function getActiveMediaEl() { return currentIsAudio ? playerAudio : playerVideo; }
+
+function fmtTime(s) {
+  if (!s || !isFinite(s)) return '0:00';
+  s = Math.floor(s);
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+async function playFile(filepath, title, entry) {
   currentPlaying = filepath;
+  currentIsAudio = isAudioFile(filepath);
+
+  // Build playback queue from currently-visible library items (audio first)
+  playlistForPlayer = (state.history || []).filter((e) => e.filepath && e._exists !== false);
+  playerIdx = playlistForPlayer.findIndex((e) => e.filepath === filepath);
+  updateNavButtons();
+
+  // Stop whichever view was previously playing
+  playerVideo.pause();
+  playerAudio.pause();
   playerTitle.textContent = title || filepath.split('/').pop();
-  playerVideo.src = 'file://' + filepath;
+
+  if (currentIsAudio) {
+    playerVideo.classList.add('hidden');
+    musicView.classList.add('show');
+    playerAudio.src = 'file://' + encodeURI(filepath);
+
+    // Album art: entry.thumbnail → else history match → else placeholder
+    const thumbUrl = (entry && entry.thumbnail)
+      || (state.history.find((e) => e.filepath === filepath) || {}).thumbnail
+      || null;
+    if (thumbUrl) {
+      musicArt.src = thumbUrl;
+      musicArt.classList.add('show');
+      musicArtPlaceholder.style.display = 'none';
+    } else {
+      musicArt.classList.remove('show');
+      musicArt.removeAttribute('src');
+      musicArtPlaceholder.style.display = 'flex';
+    }
+    musicTitle.textContent = title || filepath.split('/').pop().replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+    const match = state.history.find((e) => e.filepath === filepath);
+    musicArtist.textContent = (match && match.uploader) || (match && match.playlist) || '';
+    await loadResumePosition(playerAudio, filepath);
+    try { await playerAudio.play(); } catch (_) {}
+  } else {
+    musicView.classList.remove('show');
+    playerVideo.classList.remove('hidden');
+    playerVideo.src = 'file://' + encodeURI(filepath);
+    await loadResumePosition(playerVideo, filepath);
+    try { await playerVideo.play(); } catch (_) {}
+  }
   player.classList.add('show');
+}
+
+async function loadResumePosition(el, filepath) {
   const saved = await api.getPlayPosition(filepath);
   if (saved && saved.pos && saved.duration && (saved.pos / saved.duration) < 0.95) {
-    playerVideo.currentTime = saved.pos;
+    el.currentTime = saved.pos;
+  } else {
+    el.currentTime = 0;
   }
-  try { await playerVideo.play(); } catch (_) {}
 }
+
+function updateNavButtons() {
+  musicPrev.disabled = playerIdx <= 0;
+  musicNext.disabled = playerIdx < 0 || playerIdx >= playlistForPlayer.length - 1;
+}
+
+// Scrub / play / time / volume / speed
+musicPlayBtn.addEventListener('click', () => {
+  const el = getActiveMediaEl();
+  if (el.paused) el.play(); else el.pause();
+});
+musicBack15.addEventListener('click', () => {
+  const el = getActiveMediaEl();
+  el.currentTime = Math.max(0, el.currentTime - 15);
+});
+musicFwd15.addEventListener('click', () => {
+  const el = getActiveMediaEl();
+  el.currentTime = Math.min(el.duration || 0, el.currentTime + 15);
+});
+musicPrev.addEventListener('click', () => {
+  if (playerIdx > 0) {
+    const prev = playlistForPlayer[--playerIdx];
+    playFile(prev.filepath, prev.title, prev);
+  }
+});
+musicNext.addEventListener('click', () => {
+  if (playerIdx >= 0 && playerIdx < playlistForPlayer.length - 1) {
+    const next = playlistForPlayer[++playerIdx];
+    playFile(next.filepath, next.title, next);
+  }
+});
+playerAudio.addEventListener('ended', () => musicNext.click());
+playerVideo.addEventListener('ended', () => musicNext.click());
+
+[playerAudio, playerVideo].forEach((el) => {
+  el.addEventListener('play', () => {
+    musicPlayIcon.innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+    musicView.classList.add('playing');
+  });
+  el.addEventListener('pause', () => {
+    musicPlayIcon.innerHTML = '<polygon points="6 4 20 12 6 20 6 4"/>';
+    musicView.classList.remove('playing');
+  });
+  el.addEventListener('loadedmetadata', () => {
+    if (el === getActiveMediaEl()) musicTotalTime.textContent = fmtTime(el.duration);
+  });
+  el.addEventListener('timeupdate', () => {
+    if (el !== getActiveMediaEl()) return;
+    if (!el.duration) return;
+    const pct = (el.currentTime / el.duration) * 100;
+    musicBarFill.style.width = pct + '%';
+    musicBarHandle.style.left = pct + '%';
+    musicCurTime.textContent = fmtTime(el.currentTime);
+    scheduleSavePos(el);
+  });
+});
+
 let saveTimer = null;
-playerVideo.addEventListener('timeupdate', () => {
-  if (!currentPlaying || !playerVideo.duration) return;
+function scheduleSavePos(el) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    api.savePlayPosition(currentPlaying, playerVideo.currentTime, playerVideo.duration);
+    if (currentPlaying && el.duration) api.savePlayPosition(currentPlaying, el.currentTime, el.duration);
   }, 1500);
+}
+
+musicBar.addEventListener('click', (e) => {
+  const el = getActiveMediaEl();
+  if (!el.duration) return;
+  const r = musicBar.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+  el.currentTime = ratio * el.duration;
 });
-$('playerClose').addEventListener('click', () => {
-  if (currentPlaying && playerVideo.duration) {
-    api.savePlayPosition(currentPlaying, playerVideo.currentTime, playerVideo.duration);
-  }
-  playerVideo.pause();
-  playerVideo.src = '';
+musicVolume.addEventListener('input', () => {
+  const v = musicVolume.value / 100;
+  playerAudio.volume = v;
+  playerVideo.volume = v;
+});
+const SPEEDS = [1, 1.25, 1.5, 1.75, 2, 0.75];
+let speedIdx = 0;
+musicSpeedBtn.addEventListener('click', () => {
+  speedIdx = (speedIdx + 1) % SPEEDS.length;
+  const sp = SPEEDS[speedIdx];
+  playerAudio.playbackRate = sp;
+  playerVideo.playbackRate = sp;
+  musicSpeedBtn.textContent = sp + '×';
+});
+
+function closePlayer() {
+  const el = getActiveMediaEl();
+  if (currentPlaying && el.duration) api.savePlayPosition(currentPlaying, el.currentTime, el.duration);
+  playerAudio.pause(); playerAudio.removeAttribute('src'); playerAudio.load();
+  playerVideo.pause(); playerVideo.removeAttribute('src'); playerVideo.load();
   player.classList.remove('show');
   currentPlaying = null;
-});
+}
+$('playerClose').addEventListener('click', closePlayer);
+$('playerCloseX').addEventListener('click', closePlayer);
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && player.classList.contains('show')) $('playerClose').click();
+  if (!player.classList.contains('show')) return;
+  if (e.key === 'Escape') closePlayer();
+  else if (e.key === ' ' && e.target.tagName !== 'INPUT') { e.preventDefault(); musicPlayBtn.click(); }
+  else if (e.key === 'ArrowLeft') musicBack15.click();
+  else if (e.key === 'ArrowRight') musicFwd15.click();
 });
 
 // ============ Settings modal ============
@@ -772,6 +941,27 @@ function describeFormat(f) {
 
 // ============ Browse tab (built-in browser with webview) ============
 const SUPPORTED_SITES_RE = /(youtube\.com|youtu\.be|vimeo\.com|twitter\.com|x\.com|tiktok\.com|soundcloud\.com|twitch\.tv|dailymotion\.com|bilibili\.com|facebook\.com|instagram\.com)/i;
+
+// Only probe URLs that clearly point at a single watchable item.
+// Skips homepages, search results, channel listings, shorts/reels feeds.
+function isVideoWatchUrl(u) {
+  try {
+    if (!SUPPORTED_SITES_RE.test(u)) return false;
+    const p = new URL(u);
+    const h = p.hostname.replace(/^www\./, '');
+    const path = p.pathname;
+    if (h.endsWith('youtube.com')) return /[?&]v=[a-zA-Z0-9_-]{11}/.test(u) || /\/shorts\/[a-zA-Z0-9_-]{11}/.test(path);
+    if (h === 'youtu.be') return /\/[a-zA-Z0-9_-]{11}/.test(path);
+    if (h.endsWith('vimeo.com')) return /\/\d+/.test(path);
+    if (h.endsWith('tiktok.com')) return /\/video\/\d+/.test(path);
+    if (h.endsWith('twitter.com') || h === 'x.com') return /\/status\/\d+/.test(path);
+    if (h.endsWith('soundcloud.com')) return path.split('/').filter(Boolean).length >= 2;
+    if (h.endsWith('twitch.tv')) return /\/videos?\/\d+|\/clip\//.test(path);
+    if (h.endsWith('dailymotion.com')) return /\/video\//.test(path);
+    if (h.endsWith('bilibili.com')) return /\/video\//.test(path);
+    return true;
+  } catch (_) { return false; }
+}
 function initBrowse() {
   const webview = $('browseView');
   const urlBar = $('browseUrl');
@@ -786,12 +976,36 @@ function initBrowse() {
       return h.charAt(0).toUpperCase() + h.slice(1);
     } catch (_) { return 'Video'; }
   }
+
+  // Debounced prefetch — probe the formats in the background as soon as the
+  // user lands on a supported video page, so the FAB sheet opens instantly
+  // with real formats (no "Picking formats" spinner).
+  let prefetchTimer = null;
+  let lastPrefetchUrl = null;
+  function schedulePrefetch(url) {
+    if (!url || !isVideoWatchUrl(url)) return;
+    if (probeCache.has(url) || url === lastPrefetchUrl) return;
+    clearTimeout(prefetchTimer);
+    // Small delay so we don't fire on every SPA micro-navigation
+    prefetchTimer = setTimeout(async () => {
+      lastPrefetchUrl = url;
+      const res = await api.probeFormats(url);
+      if (res && res.ok) {
+        probeCache.set(url, res);
+        // Expire after 2 min — longer than click-driven cache since this is
+        // speculative and the user may take a while to decide
+        setTimeout(() => { probeCache.delete(url); if (lastPrefetchUrl === url) lastPrefetchUrl = null; }, 120 * 1000);
+      }
+    }, 1200);
+  }
+
   function updateSendBtn(url) {
     const match = SUPPORTED_SITES_RE.test(url || '');
     if (match) {
       sendBtn.classList.add('show');
       sendBtn.dataset.url = url;
       if (fabBadge) fabBadge.textContent = hostLabel(url);
+      schedulePrefetch(url);
     } else {
       sendBtn.classList.remove('show');
     }
@@ -922,9 +1136,22 @@ async function openFabSheet(url) {
     const chip = targetGrid.querySelector(`[data-fmt="${lastPick.fmt}"]`);
     if (chip) chip.classList.add('selected');
   }
-  titleEl.textContent = 'Loading…';
-  subEl.innerHTML = '<span class="fab-sheet-spinner"></span>Picking formats';
-  thumb.src = '';
+
+  // If we've already pre-fetched this URL (via background probe on page load),
+  // show the real data immediately — no spinner, no wait.
+  const warm = probeCache.get(url);
+  if (warm) {
+    titleEl.textContent = warm.title || '—';
+    const parts = [];
+    if (warm.uploader) parts.push(warm.uploader);
+    if (warm.duration) parts.push(fmtDur(warm.duration));
+    subEl.textContent = parts.join(' · ') || '—';
+    thumb.src = warm.thumbnail || '';
+  } else {
+    titleEl.textContent = 'Loading…';
+    subEl.innerHTML = '<span class="fab-sheet-spinner"></span>Picking formats';
+    thumb.src = '';
+  }
   backdrop.classList.add('show');
 
   let picked = false;
@@ -939,6 +1166,8 @@ async function openFabSheet(url) {
     state.selectedFormatId = null;
     if (chip.dataset.tile === 'video') { $('videoQuality').value = format; $('tileVideo').classList.add('selected'); $('tileAudio').classList.remove('selected'); }
     else { $('audioFormat').value = format; $('tileAudio').classList.add('selected'); $('tileVideo').classList.remove('selected'); }
+    // Persist as "last pick" so it's highlighted on next sheet open
+    api.updateSettings({ lastFabChoice: { tile: chip.dataset.tile, fmt: format } });
     closeFabSheet();
 
     // Playlist confirm for URLs that look like one
@@ -949,12 +1178,28 @@ async function openFabSheet(url) {
       playlist = choice === 'playlist';
     }
 
+    // REUSE the probe result (or the live webview title/thumb) to skip the
+    // second yt-dlp --dump-single-json call that main.js would otherwise make.
+    // Only applicable for non-playlist runs (playlist still needs a
+    // --flat-playlist probe to enumerate entries).
+    const cached = probeCache.get(url);
+    const liveTitle = titleEl.textContent && !['Loading…', '—', 'Could not analyze'].includes(titleEl.textContent) ? titleEl.textContent : null;
+    const liveThumb = thumb.src || null;
+    const prefetchedMeta = {
+      title: (cached && cached.title) || liveTitle || null,
+      thumbnail: (cached && cached.thumbnail) || liveThumb || null,
+      uploader: (cached && cached.uploader) || null,
+      duration: cached && cached.duration ? cached.duration : null,
+      skipProbe: !playlist && !!cached,
+    };
+
     const opts = {
       playlist,
       subtitles: $('optSubs').checked,
       cookiesBrowser: $('optCookies').value,
       formatId: null,
       resume: $('optResume').checked,
+      prefetchedMeta,
     };
     api.downloadAudio(url, format, opts);
     toast(`Downloading ${playlist ? 'playlist' : format.toUpperCase()} — track in Download tab`, 'success');
