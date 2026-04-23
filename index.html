@@ -1,119 +1,554 @@
-<!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>YouTube Downloader</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Downloader for Mac</title>
   <style>
-    body {
-      background-color: #121212;
-      color: #e0e0e0;
-      font-family: Arial, sans-serif;
-      padding: 30px;
+    :root {
+      --bg: #0e0e10;
+      --panel: #17171b;
+      --panel-2: #1e1e23;
+      --border: #2a2a31;
+      --text: #e8e8ea;
+      --muted: #9a9aa3;
+      --accent: #03dac6;
+      --accent-2: #00b8a9;
+      --danger: #ff5c6c;
+      --success: #4ade80;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .app {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      height: 100vh;
+    }
+    .main {
+      padding: 28px 28px 20px;
+      overflow-y: auto;
+    }
+    .sidebar {
+      background: var(--panel);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
     }
     h1 {
-      text-align: center;
-      color: #fff;
+      font-size: 22px;
+      font-weight: 700;
+      margin: 0 0 4px;
+      letter-spacing: -0.01em;
     }
-    input, select, button {
+    .subtitle {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 22px;
+    }
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 16px 0 8px;
+    }
+    .folder-row {
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+    }
+    .folder-display {
+      flex: 1;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+    }
+    .folder-display.set { color: var(--text); }
+    input[type="text"], select {
       width: 100%;
-      padding: 12px;
-      margin: 10px 0;
-      border: none;
-      border-radius: 4px;
-      font-size: 16px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 12px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s;
     }
-    input, select {
-      background-color: #1e1e1e;
-      color: #fff;
+    input[type="text"]:focus, select:focus {
+      border-color: var(--accent);
+    }
+    .row-2 {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      margin-top: 10px;
     }
     button {
-      background-color: #03dac6;
+      background: var(--accent);
       color: #000;
-      cursor: pointer;
-      transition: background 0.3s;
-    }
-    button:hover {
-      background-color: #00c4b4;
-    }
-    .progress {
-      margin-top: 20px;
-    }
-    .folder-path {
+      border: none;
+      padding: 11px 18px;
+      border-radius: 8px;
       font-size: 14px;
-      color: #aaa;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.05s;
+    }
+    button:hover:not(:disabled) { background: var(--accent-2); }
+    button:active:not(:disabled) { transform: translateY(1px); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    button.secondary:hover:not(:disabled) { background: var(--border); }
+    button.danger {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid var(--border);
+    }
+    button.danger:hover:not(:disabled) { background: rgba(255, 92, 108, 0.1); }
+    .status-card {
+      margin-top: 18px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      min-height: 96px;
+    }
+    .status-card.empty { color: var(--muted); }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       margin-bottom: 10px;
     }
+    .status-title {
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .status-sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .progress-bar {
+      background: var(--panel-2);
+      border-radius: 999px;
+      height: 8px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      height: 100%;
+      width: 0%;
+      transition: width 0.25s ease-out;
+    }
+    .status-meta {
+      display: flex;
+      gap: 14px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 10px;
+    }
+    .thumb {
+      width: 100%;
+      border-radius: 8px;
+      margin-top: 12px;
+      max-height: 160px;
+      object-fit: cover;
+      display: none;
+    }
+    .thumb.show { display: block; }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--panel-2);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+    .pill.success { color: var(--success); border-color: rgba(74, 222, 128, 0.3); }
+    .pill.error { color: var(--danger); border-color: rgba(255, 92, 108, 0.3); }
+
+    /* sidebar / history */
+    .sidebar-header {
+      padding: 18px 18px 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .sidebar-header button {
+      background: transparent;
+      color: var(--muted);
+      border: none;
+      padding: 4px 8px;
+      font-size: 12px;
+      border-radius: 6px;
+    }
+    .sidebar-header button:hover { color: var(--danger); background: rgba(255, 92, 108, 0.08); }
+    .history-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+    .history-empty {
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      padding: 40px 20px;
+    }
+    .history-item {
+      padding: 10px 12px;
+      border-radius: 8px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      transition: background 0.1s;
+      position: relative;
+      border: 1px solid transparent;
+    }
+    .history-item:hover {
+      background: var(--panel-2);
+      border-color: var(--border);
+    }
+    .history-title {
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 1.3;
+      margin-bottom: 4px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .history-meta {
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .history-actions {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: none;
+      gap: 4px;
+    }
+    .history-item:hover .history-actions { display: flex; }
+    .history-actions button {
+      background: var(--panel);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      padding: 4px 8px;
+      font-size: 11px;
+      border-radius: 6px;
+    }
+    .history-actions button:hover { color: var(--text); }
+
+    .footer {
+      padding: 8px 18px 14px;
+      font-size: 11px;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+      text-align: center;
+    }
+    .footer a { color: var(--muted); text-decoration: none; }
+    .footer a:hover { color: var(--text); }
   </style>
 </head>
 <body>
-  <h1>YouTube Downloader</h1>
-  <button id="selectFolderBtn">📁 Select Download Folder</button>
-  <div class="folder-path" id="folderPath">📂 No folder selected</div>
-  <input id="urlInput" type="text" placeholder="Paste YouTube URL here" />
-  <select id="formatSelect">
-    <option value="webm">WebM (best quality)</option>
-    <option value="mp3">MP3 (convert)</option>
-  </select>
-  <button id="downloadBtn">Download</button>
+  <div class="app">
+    <div class="main">
+      <h1>Downloader for Mac</h1>
+      <div class="subtitle">Download audio from YouTube — MP3 or WebM.</div>
 
-  <div class="progress" id="progressText">Ready.</div>
-  <div style="background:#1e1e1e;border-radius:4px;height:10px;margin-top:8px;overflow:hidden">
-    <div id="progressBar" style="background:#03dac6;height:100%;width:0%;transition:width .2s"></div>
+      <div class="section-label">Save to</div>
+      <div class="folder-row">
+        <div class="folder-display" id="folderPath">No folder selected</div>
+        <button class="secondary" id="selectFolderBtn">Choose…</button>
+        <button class="secondary" id="openFolderBtn" title="Open folder">↗</button>
+      </div>
+
+      <div class="section-label">Video URL</div>
+      <input id="urlInput" type="text" placeholder="https://youtube.com/watch?v=…" spellcheck="false" />
+
+      <div class="row-2" style="margin-top: 14px;">
+        <select id="formatSelect">
+          <option value="mp3">MP3 (converted, universal)</option>
+          <option value="webm">WebM (original audio, highest quality)</option>
+        </select>
+        <button id="downloadBtn">Download</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--muted);cursor:pointer;user-select:none;">
+        <input type="checkbox" id="playlistToggle" style="width:auto;margin:0;accent-color:var(--accent);" />
+        Download entire playlist (if URL is a playlist)
+      </label>
+
+      <div class="status-card empty" id="statusCard">
+        <div class="status-row">
+          <div class="status-title" id="statusTitle">Ready</div>
+          <span class="pill" id="statusPill">idle</span>
+        </div>
+        <div class="status-sub" id="statusSub">Paste a URL and click Download.</div>
+        <div class="progress-bar"><div class="progress-fill" id="progressBar"></div></div>
+        <div class="status-meta" id="statusMeta"></div>
+        <img class="thumb" id="thumb" />
+      </div>
+    </div>
+
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <span class="sidebar-title">History</span>
+        <button id="clearHistoryBtn">Clear all</button>
+      </div>
+      <div class="history-list" id="historyList">
+        <div class="history-empty">No downloads yet.</div>
+      </div>
+      <div class="footer">
+        <a href="https://github.com/ahfoysal/downloader-for-mac" id="repoLink">ahfoysal/downloader-for-mac</a>
+      </div>
+    </div>
   </div>
 
   <script>
-    const urlInput = document.getElementById('urlInput');
-    const formatSelect = document.getElementById('formatSelect');
-    const downloadBtn = document.getElementById('downloadBtn');
-    const selectFolderBtn = document.getElementById('selectFolderBtn');
-    const folderPathDisplay = document.getElementById('folderPath');
-    const progressText = document.getElementById('progressText');
-    const progressBar = document.getElementById('progressBar');
+    const $ = (id) => document.getElementById(id);
+    const urlInput = $('urlInput');
+    const formatSelect = $('formatSelect');
+    const downloadBtn = $('downloadBtn');
+    const selectFolderBtn = $('selectFolderBtn');
+    const openFolderBtn = $('openFolderBtn');
+    const folderPath = $('folderPath');
+    const statusCard = $('statusCard');
+    const statusTitle = $('statusTitle');
+    const statusSub = $('statusSub');
+    const statusPill = $('statusPill');
+    const statusMeta = $('statusMeta');
+    const progressBar = $('progressBar');
+    const thumb = $('thumb');
+    const historyList = $('historyList');
+    const clearHistoryBtn = $('clearHistoryBtn');
+    const repoLink = $('repoLink');
+    const playlistToggle = $('playlistToggle');
 
-    const updateFolderDisplay = (path) => {
-      folderPathDisplay.textContent = path ? `📂 ${path}` : '📂 No folder selected';
-    };
+    let downloading = false;
+
+    function setFolder(p) {
+      if (p) {
+        folderPath.textContent = p;
+        folderPath.classList.add('set');
+      } else {
+        folderPath.textContent = 'No folder selected';
+        folderPath.classList.remove('set');
+      }
+    }
+
+    function setPill(text, kind) {
+      statusPill.textContent = text;
+      statusPill.className = 'pill' + (kind ? ' ' + kind : '');
+    }
+
+    function resetStatus() {
+      statusCard.classList.add('empty');
+      statusTitle.textContent = 'Ready';
+      statusSub.textContent = 'Paste a URL and click Download.';
+      statusMeta.textContent = '';
+      progressBar.style.width = '0%';
+      thumb.classList.remove('show');
+      thumb.src = '';
+      setPill('idle');
+    }
+
+    function fmtDuration(ms) {
+      if (!ms) return '';
+      const s = Math.round(ms / 1000);
+      if (s < 60) return `${s}s`;
+      return `${Math.floor(s / 60)}m ${s % 60}s`;
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      const now = new Date();
+      const sameDay = d.toDateString() === now.toDateString();
+      if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    }
+
+    function renderHistory(entries) {
+      if (!entries || entries.length === 0) {
+        historyList.innerHTML = '<div class="history-empty">No downloads yet.</div>';
+        return;
+      }
+      historyList.innerHTML = entries
+        .map((e) => {
+          const title = (e.title || e.url || 'Unknown').replace(/</g, '&lt;');
+          const uploader = e.uploader ? e.uploader.replace(/</g, '&lt;') : '';
+          return `
+          <div class="history-item" data-id="${e.id}" data-path="${(e.filepath || '').replace(/"/g, '&quot;')}">
+            <div class="history-title">${title}</div>
+            <div class="history-meta">
+              <span>${(e.format || '').toUpperCase()}</span>
+              ${uploader ? `<span>• ${uploader}</span>` : ''}
+              <span>• ${fmtTime(e.timestamp)}</span>
+            </div>
+            <div class="history-actions">
+              <button data-action="reveal" data-id="${e.id}">Show</button>
+              <button data-action="delete" data-id="${e.id}">✕</button>
+            </div>
+          </div>`;
+        })
+        .join('');
+    }
+
+    async function refreshHistory() {
+      const entries = await window.electronAPI.getHistory();
+      renderHistory(entries);
+    }
+
+    historyList.addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('button[data-action]');
+      if (btn) {
+        ev.stopPropagation();
+        const id = btn.dataset.id;
+        if (btn.dataset.action === 'delete') {
+          const entries = await window.electronAPI.deleteHistoryEntry(id);
+          renderHistory(entries);
+        } else if (btn.dataset.action === 'reveal') {
+          const item = btn.closest('.history-item');
+          await window.electronAPI.revealFile(item.dataset.path);
+        }
+        return;
+      }
+      const item = ev.target.closest('.history-item');
+      if (item && item.dataset.path) {
+        await window.electronAPI.revealFile(item.dataset.path);
+      }
+    });
+
+    clearHistoryBtn.addEventListener('click', async () => {
+      if (!confirm('Clear all download history? This does not delete any files.')) return;
+      const entries = await window.electronAPI.clearHistory();
+      renderHistory(entries);
+    });
 
     selectFolderBtn.addEventListener('click', async () => {
       const folder = await window.electronAPI.selectDownloadFolder();
-      updateFolderDisplay(folder);
+      setFolder(folder);
     });
 
+    openFolderBtn.addEventListener('click', () => window.electronAPI.openFolder());
+
+    function setDownloading(on) {
+      downloading = on;
+      downloadBtn.textContent = on ? 'Cancel' : 'Download';
+      downloadBtn.classList.toggle('danger', on);
+    }
+
     downloadBtn.addEventListener('click', () => {
+      if (downloading) {
+        window.electronAPI.cancelDownload();
+        return;
+      }
       const url = urlInput.value.trim();
       const format = formatSelect.value;
-      if (url) {
-        window.electronAPI.downloadAudio(url, format);
-        progressText.textContent = 'Starting… (first launch may take ~20s)';
-        progressBar.style.width = '0%';
+      if (!url) {
+        urlInput.focus();
+        return;
+      }
+      statusCard.classList.remove('empty');
+      statusTitle.textContent = 'Starting…';
+      statusSub.textContent = 'First download takes ~15–20s while yt-dlp unpacks.';
+      statusMeta.textContent = '';
+      progressBar.style.width = '0%';
+      thumb.classList.remove('show');
+      setPill('working');
+      setDownloading(true);
+      window.electronAPI.downloadAudio(url, format, playlistToggle.checked);
+    });
+
+    window.electronAPI.onMeta((meta) => {
+      if (meta.title) {
+        statusTitle.textContent = meta.title;
+        statusSub.textContent = meta.uploader || '';
+      }
+      if (meta.thumbnail) {
+        thumb.src = meta.thumbnail;
+        thumb.classList.add('show');
       }
     });
 
     window.electronAPI.onStatus((msg) => {
-      progressText.textContent = msg;
+      statusSub.textContent = msg;
     });
 
     window.electronAPI.onProgress((data) => {
-      const pct = data && data.percent != null ? data.percent : 0;
-      const speed = data && data.speed ? ` @ ${data.speed}` : '';
-      const eta = data && data.eta ? ` • ETA ${data.eta}` : '';
-      progressText.textContent = `Downloading: ${pct}%${speed}${eta}`;
+      const pct = data && data.percent != null ? parseFloat(data.percent) : 0;
       progressBar.style.width = `${pct}%`;
+      const prefix = data.item && data.item.total && data.item.total !== 'NA' ? `[${data.item.index}/${data.item.total}] ` : '';
+      setPill(`${prefix}${pct.toFixed(1)}%`, 'working');
+      const parts = [];
+      if (data.speed) parts.push(data.speed);
+      if (data.eta) parts.push('ETA ' + data.eta);
+      if (data.size) parts.push(data.size);
+      statusMeta.textContent = parts.join('  •  ');
     });
 
-    window.electronAPI.onComplete(() => {
-      progressText.textContent = '✅ Download complete!';
+    window.electronAPI.onComplete(async (payload) => {
+      setDownloading(false);
+      statusSub.textContent = 'Download complete';
+      setPill('done', 'success');
       progressBar.style.width = '100%';
+      if (payload && payload.history) renderHistory(payload.history);
+      else refreshHistory();
     });
 
-    window.electronAPI.onError((message) => {
-      progressText.textContent = `❌ Error: ${message}`;
+    window.electronAPI.onError((msg) => {
+      setDownloading(false);
+      statusTitle.textContent = 'Error';
+      statusSub.textContent = msg || 'Unknown error';
+      setPill('error', 'error');
+      progressBar.style.width = '0%';
     });
 
-    // Load saved folder on app start
-    window.electronAPI.getSavedFolder().then(updateFolderDisplay);
+    repoLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      // Electron will intercept external nav; but window.open also works.
+      window.open('https://github.com/ahfoysal/downloader-for-mac');
+    });
+
+    window.electronAPI.getSavedFolder().then(setFolder);
+    refreshHistory();
   </script>
 </body>
 </html>
