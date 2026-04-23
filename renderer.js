@@ -662,7 +662,19 @@ async function playFile(filepath, title, entry) {
   musicTitle.textContent = title || filepath.split('/').pop().replace(/\.[^.]+$/, '').replace(/_/g, ' ');
   musicArtist.textContent = (match && match.uploader) || (match && match.playlist) || '';
   await loadResumePosition(playerVideo, filepath);
-  try { await playerVideo.play(); } catch (_) {}
+  try { await playerVideo.play(); api.incrementPlayCount(filepath); } catch (_) {}
+
+  // Reset lyrics for the new track. If the pane is open, reload after we have duration.
+  lyricsData = null;
+  if (lyricsShown) {
+    lyricsPane.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:20px;">Loading lyrics…</div>';
+    const reload = () => {
+      playerVideo.removeEventListener('loadedmetadata', reload);
+      loadLyrics(musicTitle.textContent, musicArtist.textContent);
+    };
+    if (playerVideo.readyState >= 1 && isFinite(playerVideo.duration)) reload();
+    else playerVideo.addEventListener('loadedmetadata', reload);
+  }
   // Always show the mini-player. Only open expanded view on first play of a session.
   syncMini();
   renderQueueList();
@@ -774,10 +786,14 @@ function closePlayer() {
 // Expanded player → collapse to mini
 function collapsePlayer() {
   player.classList.remove('show');
-  renderQueueList(); // keep fresh for next expand
+  // Lyrics pane is tied to the expanded player — hide it when collapsing
+  if (lyricsPane) lyricsPane.classList.remove('show');
+  renderQueueList();
 }
 function expandPlayer() {
   player.classList.add('show');
+  // Restore lyrics visibility if user had it on
+  if (lyricsShown && lyricsPane) lyricsPane.classList.add('show');
   renderQueueList();
 }
 $('playerCollapse').addEventListener('click', collapsePlayer);
@@ -947,6 +963,8 @@ async function openSettings() {
   $('setOrganize').checked = !!s.organizeByUploader;
   $('setKeepAwake').checked = s.keepAwake !== false;
   $('setAutoRetry').checked = s.autoRetryYtDlp !== false;
+  if ($('setSponsorBlock')) $('setSponsorBlock').checked = !!s.sponsorBlock;
+  if ($('setLoudness')) $('setLoudness').checked = !!s.loudnessNormalize;
   $('setWatchFolder').value = s.watchFolder || '';
   settingsModal.classList.add('show');
 }
@@ -957,8 +975,10 @@ async function openSettings() {
   ['setOrganize', 'organizeByUploader', (e) => e.target.checked, true],
   ['setKeepAwake', 'keepAwake', (e) => e.target.checked, true],
   ['setAutoRetry', 'autoRetryYtDlp', (e) => e.target.checked, true],
+  ['setSponsorBlock', 'sponsorBlock', (e) => e.target.checked, true],
+  ['setLoudness', 'loudnessNormalize', (e) => e.target.checked, true],
   ['setWatchFolder', 'watchFolder', (v) => v.trim()],
-].forEach(([id, key, conv, isCheckbox]) => {
+].filter(([id]) => $(id)).forEach(([id, key, conv, isCheckbox]) => {
   $(id).addEventListener('change', async (e) => {
     const v = isCheckbox ? conv(e) : conv(e.target.value);
     await api.updateSettings({ [key]: v });
@@ -1053,6 +1073,13 @@ api.onWatchFolderUrls((urls) => {
 api.onScheduledTrigger((task) => {
   toast(`Running scheduled: ${task.url.slice(0, 40)}…`, 'info');
   api.downloadAudio(task.url, task.format, task.opts || {});
+});
+
+// Channel subscriptions: auto-download new content (uses yt-dlp's
+// --download-archive to only grab newly-uploaded items)
+api.onChannelTrigger((c) => {
+  toast(`Channel sync: ${c.url.slice(0, 40)}…`, 'info');
+  api.downloadAudio(c.url, c.format || 'mp3', { playlist: true, ...(c.opts || {}) });
 });
 
 let lastClip = '';
@@ -1542,23 +1569,47 @@ function parseSyncedLyrics(synced) {
   return lines.length ? lines : null;
 }
 
+function cleanTrackTitle(title) {
+  return (title || '')
+    .replace(/\(Official.*?\)|\[Official.*?\]/gi, '')
+    .replace(/\(Audio\)|\(Lyrics?\s*Video\)|\(Lyrics\)|\(HD\)|\(4K\)|\(Remaster.*?\)|\(Music Video\)|\(Official Music Video\)/gi, '')
+    .replace(/\s+-\s+YouTube\s*$/i, '')
+    .replace(/\s*\|\s*.*$/g, '')  // strip "| Vevo | channel" suffix
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function splitArtistTitle(title, fallbackArtist) {
+  const clean = cleanTrackTitle(title);
+  let artist = (fallbackArtist || '').trim();
+  let track = clean;
+  // Strip "- Topic" suffix that YouTube uses for auto-uploaded music
+  artist = artist.replace(/\s*-\s*Topic\s*$/i, '').trim();
+  // If no artist or artist looks generic, try to split "Artist - Title" from the title itself
+  if ((!artist || artist.toLowerCase() === 'unknown') && /\s+-\s+/.test(clean)) {
+    const parts = clean.split(/\s+-\s+/);
+    if (parts.length === 2) { artist = parts[0].trim(); track = parts[1].trim(); }
+  } else if (artist && clean.toLowerCase().startsWith(artist.toLowerCase() + ' - ')) {
+    // "Artist - Track" when the title already has the artist prefix
+    track = clean.slice(artist.length + 3).trim();
+  } else if (/\s+-\s+/.test(clean)) {
+    // Artist is known but title has "... - ..." — take part after first ' - '
+    const dashIdx = clean.indexOf(' - ');
+    if (dashIdx > 0) track = clean.slice(dashIdx + 3).trim();
+  }
+  return { artist, track };
+}
+
 async function loadLyrics(title, artist) {
   if (!title) { lyricsPane.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:20px;">No track.</div>'; return; }
   lyricsPane.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:20px;">Searching lyrics…</div>';
-  const cleanTitle = title
-    .replace(/\(Official.*?\)|\[Official.*?\]/gi, '')
-    .replace(/\(Audio\)|\(Lyrics?\)|\(HD\)|\(4K\)|\(Remaster.*?\)/gi, '')
-    .replace(/\s+-\s+YouTube\s*$/i, '')
-    .trim();
-  let cleanArtist = artist;
-  // Try to split "Artist - Title"
-  if (!artist && /\s-\s/.test(cleanTitle)) {
-    const parts = cleanTitle.split(/\s+-\s+/);
-    if (parts.length === 2) { cleanArtist = parts[0].trim(); }
-  }
-  const res = await api.fetchLyrics(cleanArtist || '', cleanTitle.replace(/^.+?\s+-\s+/, ''));
+  const parsed = splitArtistTitle(title, artist);
+  const duration = playerVideo && playerVideo.duration && isFinite(playerVideo.duration) ? Math.round(playerVideo.duration) : null;
+  const res = await api.fetchLyrics(parsed.artist, parsed.track, duration);
   if (!res.ok || (!res.synced && !res.plain)) {
-    lyricsPane.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:20px;">No lyrics found.</div>';
+    lyricsPane.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:20px;">
+      No lyrics found<br><span style="font-size:11px;">Searched: "${parsed.artist}" · "${parsed.track}"</span>
+    </div>`;
     lyricsData = null;
     return;
   }

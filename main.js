@@ -85,9 +85,13 @@ let appSettings = {
   extensionInstalled: false,
   extensionLastSeen: null,
   extensionBanner: 'show',
-  siteDefaults: {},               // { 'youtube.com': 'mp3', 'twitter.com': 'best', ... }
-  autoRetryYtDlp: true,           // auto-update yt-dlp and retry on signature failure
-  playPositions: {},              // { [filepath]: { pos: seconds, duration: seconds } }
+  siteDefaults: {},
+  autoRetryYtDlp: true,
+  playPositions: {},
+  sponsorBlock: false,             // remove sponsor segments from YouTube via yt-dlp
+  loudnessNormalize: false,         // ffmpeg loudness normalization for audio downloads
+  playCounts: {},                   // { [filepath]: count }
+  channels: [],                     // [{ id, url, title, cron, last, format, opts }]
 };
 let powerBlockerId = null;
 
@@ -757,6 +761,59 @@ ipcMain.handle('get-play-position', (_e, filepath) => {
   return appSettings.playPositions[filepath] || null;
 });
 
+// Play counts — increment on each play
+ipcMain.handle('increment-play-count', (_e, filepath) => {
+  if (!filepath) return 0;
+  const cur = (appSettings.playCounts[filepath] || 0) + 1;
+  appSettings.playCounts[filepath] = cur;
+  saveSettings();
+  return cur;
+});
+ipcMain.handle('get-play-counts', () => appSettings.playCounts || {});
+
+// Channel subscriptions
+ipcMain.handle('list-channels', () => appSettings.channels || []);
+ipcMain.handle('add-channel', (_e, { url, cron, format, opts }) => {
+  const entry = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    url, cron: cron || 'daily', format: format || 'mp3', opts: opts || {}, last: null,
+  };
+  appSettings.channels = (appSettings.channels || []).concat([entry]);
+  saveSettings();
+  return appSettings.channels;
+});
+ipcMain.handle('remove-channel', (_e, id) => {
+  appSettings.channels = (appSettings.channels || []).filter((c) => c.id !== id);
+  saveSettings();
+  return appSettings.channels;
+});
+
+// Extend the scheduler to also fire channel subs
+(function extendScheduler() {
+  const origStart = startScheduler;
+  startScheduler = function () {
+    origStart();
+    if (channelInterval) clearInterval(channelInterval);
+    channelInterval = setInterval(runDueChannels, 60 * 1000);
+  };
+})();
+let channelInterval = null;
+function runDueChannels() {
+  const now = new Date();
+  const list = appSettings.channels || [];
+  for (const c of list) {
+    if (!c.url) continue;
+    const lastMs = c.last ? new Date(c.last).getTime() : 0;
+    const everyMs = c.cron === 'hourly' ? 60 * 60 * 1000
+                  : c.cron === 'daily'  ? 24 * 60 * 60 * 1000
+                  : c.cron === 'weekly' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    if (now.getTime() - lastMs < everyMs) continue;
+    c.last = now.toISOString();
+    if (mainWindow) mainWindow.webContents.send('channel-trigger', c);
+  }
+  saveSettings();
+}
+
 // Check that a history-item file still exists on disk
 ipcMain.handle('file-exists', (_e, filepath) => {
   try { return !!filepath && fs.existsSync(filepath); } catch (_) { return false; }
@@ -782,39 +839,66 @@ function saveProbeCache(cache) {
   try { fs.writeFileSync(probeCachePath, JSON.stringify(cache)); } catch (_) {}
 }
 // LRCLIB — free, no auth, synced lyrics
-ipcMain.handle('fetch-lyrics', async (_e, { artist, title }) => {
-  if (!title) return { ok: false, error: 'no title' };
+function lrclibGet(params) {
   return new Promise((resolve) => {
-    const q = new URLSearchParams({ artist_name: artist || '', track_name: title });
-    const url = `https://lrclib.net/api/get?${q}`;
-    https.get(url, { headers: { 'User-Agent': 'DownloaderForMac/2.1' } }, (res) => {
+    const q = new URLSearchParams(params);
+    https.get(`https://lrclib.net/api/get?${q}`, { headers: { 'User-Agent': 'DownloaderForMac/2.1' } }, (res) => {
       let data = '';
       res.on('data', (c) => { data += c; });
       res.on('end', () => {
         if (res.statusCode === 200) {
           try {
             const json = JSON.parse(data);
-            resolve({ ok: true, synced: json.syncedLyrics || null, plain: json.plainLyrics || null });
-          } catch (_) { resolve({ ok: false, error: 'parse' }); }
-        } else {
-          // Try search endpoint as fallback
-          const s = new URLSearchParams({ q: `${artist || ''} ${title}`.trim() });
-          https.get(`https://lrclib.net/api/search?${s}`, { headers: { 'User-Agent': 'DownloaderForMac/2.1' } }, (r2) => {
-            let d2 = '';
-            r2.on('data', (c) => { d2 += c; });
-            r2.on('end', () => {
-              try {
-                const list = JSON.parse(d2);
-                if (Array.isArray(list) && list.length) {
-                  resolve({ ok: true, synced: list[0].syncedLyrics || null, plain: list[0].plainLyrics || null });
-                } else resolve({ ok: false, error: 'not found' });
-              } catch (_) { resolve({ ok: false, error: 'parse' }); }
-            });
-          }).on('error', () => resolve({ ok: false, error: 'net' }));
-        }
+            resolve({ ok: true, synced: json.syncedLyrics || null, plain: json.plainLyrics || null, source: 'get' });
+          } catch (_) { resolve({ ok: false }); }
+        } else resolve({ ok: false, status: res.statusCode });
       });
     }).on('error', () => resolve({ ok: false, error: 'net' }));
   });
+}
+
+function lrclibSearch(query, duration) {
+  return new Promise((resolve) => {
+    const q = new URLSearchParams({ q: query });
+    https.get(`https://lrclib.net/api/search?${q}`, { headers: { 'User-Agent': 'DownloaderForMac/2.1' } }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        try {
+          const list = JSON.parse(data);
+          if (!Array.isArray(list) || list.length === 0) return resolve({ ok: false });
+          // Rank: prefer result whose duration is closest to our track, and prefer synced lyrics
+          const scored = list.map((r) => {
+            const dd = duration && r.duration ? Math.abs(r.duration - duration) : 999;
+            const syncBonus = r.syncedLyrics ? -1000 : 0;
+            return { r, score: dd + syncBonus };
+          }).sort((a, b) => a.score - b.score);
+          const best = scored[0].r;
+          resolve({ ok: true, synced: best.syncedLyrics || null, plain: best.plainLyrics || null, source: 'search' });
+        } catch (_) { resolve({ ok: false }); }
+      });
+    }).on('error', () => resolve({ ok: false, error: 'net' }));
+  });
+}
+
+ipcMain.handle('fetch-lyrics', async (_e, { artist, title, duration, album }) => {
+  if (!title) return { ok: false, error: 'no title' };
+  // 1) Exact `get` if we have artist+title (+optional duration/album)
+  if (artist) {
+    const params = { artist_name: artist, track_name: title };
+    if (album) params.album_name = album;
+    if (duration) params.duration = Math.round(duration);
+    const r = await lrclibGet(params);
+    if (r.ok && (r.synced || r.plain)) return r;
+  }
+  // 2) Fallback: search with duration-aware ranking
+  const q = [artist, title].filter(Boolean).join(' ').trim();
+  const r = await lrclibSearch(q || title, duration);
+  if (r.ok && (r.synced || r.plain)) return r;
+  // 3) Last resort: try just title
+  const r2 = await lrclibSearch(title, duration);
+  if (r2.ok && (r2.synced || r2.plain)) return r2;
+  return { ok: false, error: 'not found' };
 });
 
 // Activity log — ring buffer of last 500 events
@@ -1358,6 +1442,14 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
   }
   if (!playlist) args.push('--no-playlist');
   if (playlist) args.push('--ignore-errors');
+  // SponsorBlock: remove sponsor segments from YouTube downloads
+  if (appSettings.sponsorBlock) {
+    args.push('--sponsorblock-remove', 'sponsor,selfpromo,interaction');
+  }
+  // Loudness normalize (audio only, via ffmpeg postprocessor)
+  if (appSettings.loudnessNormalize && preset.kind === 'audio') {
+    args.push('--postprocessor-args', 'ffmpeg:-af loudnorm=I=-16:TP=-1.5:LRA=11');
+  }
 
   currentDownload = ytDlpWrap.exec(args);
   const myDownload = activeDownloads.get(downloadId);

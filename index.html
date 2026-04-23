@@ -1402,7 +1402,9 @@
       display: none;
       z-index: 501;
     }
-    .lyrics-pane.show { display: block; }
+    /* Only visible when expanded player is open AND user toggled lyrics on */
+    .player.show ~ .lyrics-pane.show,
+    body:has(.player.show) .lyrics-pane.show { display: block; }
     .lyrics-line {
       font-size: 14px;
       line-height: 1.7;
@@ -2218,6 +2220,14 @@
         <div class="setting-row">
           <label>Auto-retry on yt-dlp extractor break</label>
           <input type="checkbox" id="setAutoRetry" />
+        </div>
+        <div class="setting-row">
+          <label>Remove sponsor segments (YouTube)</label>
+          <input type="checkbox" id="setSponsorBlock" />
+        </div>
+        <div class="setting-row">
+          <label>Normalize audio loudness (EBU R128)</label>
+          <input type="checkbox" id="setLoudness" />
         </div>
         <div class="setting-row">
           <label>Watch folder for .txt URL lists</label>
