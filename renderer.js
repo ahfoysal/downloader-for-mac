@@ -931,6 +931,24 @@ $('btnSettings').addEventListener('click', openSettings);
 $('settingsClose').addEventListener('click', () => settingsModal.classList.remove('show'));
 settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) settingsModal.classList.remove('show'); });
 
+async function refreshChannels() {
+  const list = await api.listChannels();
+  const el = $('channelList');
+  if (!el) return;
+  if (list.length === 0) { el.innerHTML = '<div style="color:var(--text-muted);font-size:11px;padding:6px 2px;">No channel subscriptions.</div>'; return; }
+  el.innerHTML = list.map((c) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;font-size:12px;">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(c.url || '').replace(/</g, '&lt;')}</span>
+      <span style="color:var(--text-muted);font-size:10px;">${c.cron} · ${(c.format || 'mp3').toUpperCase()}</span>
+      <button data-chan-del="${c.id}" class="btn btn-ghost btn-sm" style="padding:2px 8px;color:var(--danger);">✕</button>
+    </div>
+  `).join('');
+  el.querySelectorAll('[data-chan-del]').forEach((b) => b.addEventListener('click', async () => {
+    await api.removeChannel(b.dataset.chanDel);
+    refreshChannels();
+  }));
+}
+
 async function openSettings() {
   const s = await api.getSettings();
   state.settings = s;
@@ -966,6 +984,7 @@ async function openSettings() {
   if ($('setSponsorBlock')) $('setSponsorBlock').checked = !!s.sponsorBlock;
   if ($('setLoudness')) $('setLoudness').checked = !!s.loudnessNormalize;
   $('setWatchFolder').value = s.watchFolder || '';
+  refreshChannels();
   settingsModal.classList.add('show');
 }
 [
@@ -991,6 +1010,17 @@ $('setFolderPick').addEventListener('click', async () => {
 $('setWatchFolderPick').addEventListener('click', async () => {
   const dir = await api.pickFolder('Watch folder');
   if (dir) { $('setWatchFolder').value = dir; await api.updateSettings({ watchFolder: dir }); }
+});
+
+const chanAddBtn = $('chanAdd');
+if (chanAddBtn) chanAddBtn.addEventListener('click', async () => {
+  const url = $('chanUrl').value.trim();
+  const cron = $('chanCron').value;
+  if (!/^https?:\/\//i.test(url)) { toast('Enter a valid channel URL', 'error'); return; }
+  await api.addChannel({ url, cron, format: 'mp3' });
+  $('chanUrl').value = '';
+  refreshChannels();
+  toast('Channel added', 'success');
 });
 $('btnFolder').addEventListener('click', () => api.openFolder());
 
@@ -1510,6 +1540,79 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && $('fabSheetBackdrop').classList.contains('show')) closeFabSheet();
 });
+
+// ============ Audio visualizer (WebAudio analyzer) ============
+let audioCtx = null;
+let analyser = null;
+let sourceNode = null;
+let vizRaf = 0;
+function ensureVisualizer() {
+  const canvas = $('visualizer');
+  if (!canvas) return;
+  // Only animate for audio files (when the video element is hidden)
+  const isAudio = !playerVideo.classList.contains('show');
+  if (!isAudio) {
+    canvas.style.display = 'none';
+    cancelAnimationFrame(vizRaf);
+    return;
+  }
+  canvas.style.display = 'block';
+
+  if (!audioCtx) {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      sourceNode = audioCtx.createMediaElementSource(playerVideo);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      sourceNode.connect(analyser);
+      analyser.connect(audioCtx.destination);
+    } catch (err) {
+      console.warn('visualizer init failed', err);
+      canvas.style.display = 'none';
+      return;
+    }
+  }
+  try { if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (_) {}
+
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = 300 * dpr;
+  canvas.height = 300 * dpr;
+  ctx.scale(dpr, dpr);
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+  const accent = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#5eead4';
+
+  function draw() {
+    vizRaf = requestAnimationFrame(draw);
+    if (!analyser) return;
+    analyser.getByteFrequencyData(dataArray);
+    ctx.clearRect(0, 0, 300, 300);
+    const cx = 150, cy = 150, radius = 88;
+    const bars = 64;
+    for (let i = 0; i < bars; i++) {
+      const dataIdx = Math.floor(i / bars * bufferLength * 0.6);
+      const v = dataArray[dataIdx] / 255;
+      const barLen = 12 + v * 52;
+      const angle = (i / bars) * Math.PI * 2 - Math.PI / 2;
+      const x1 = cx + Math.cos(angle) * radius;
+      const y1 = cy + Math.sin(angle) * radius;
+      const x2 = cx + Math.cos(angle) * (radius + barLen);
+      const y2 = cy + Math.sin(angle) * (radius + barLen);
+      ctx.strokeStyle = accent;
+      ctx.globalAlpha = 0.25 + v * 0.55;
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+  cancelAnimationFrame(vizRaf);
+  draw();
+}
 
 // ============ Shuffle + repeat ============
 let shuffleOn = false;
