@@ -499,15 +499,16 @@ ipcMain.handle('import-chrome-cookies', async (_e, { domainFilter } = {}) => {
       fs.copyFileSync(db, tmp);
       let rows;
       try {
-        const sql = `SELECT host_key, name, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite FROM cookies${domainFilter ? ` WHERE host_key LIKE '%${domainFilter.replace(/'/g,"''")}%'` : ''};`;
-        const raw = execFileSync('sqlite3', ['-separator', '\x1f', tmp, sql], { encoding: 'binary', maxBuffer: 100 * 1024 * 1024 });
+        // Use hex() so binary is ASCII — otherwise embedded newlines/0x1f bytes
+        // in the encrypted blob break the row split.
+        const sql = `SELECT host_key, name, hex(encrypted_value), path, expires_utc, is_secure, is_httponly, samesite FROM cookies${domainFilter ? ` WHERE host_key LIKE '%${domainFilter.replace(/'/g,"''")}%'` : ''};`;
+        const raw = execFileSync('sqlite3', ['-separator', '\x1f', tmp, sql], { encoding: 'utf8', maxBuffer: 100 * 1024 * 1024 });
         rows = raw.split('\n').filter(Boolean).map((line) => {
           const parts = line.split('\x1f');
           return {
             host: parts[0], name: parts[1],
-            // The encrypted_value is a BLOB. sqlite3 CLI emits binary bytes directly.
-            // But our -separator split on 0x1f may have split inside binary. Use readline instead.
-            encrypted: parts[2], path: parts[3],
+            encryptedHex: parts[2] || '',
+            path: parts[3],
             expires: parseInt(parts[4]) || 0,
             secure: parts[5] === '1', httpOnly: parts[6] === '1', sameSite: parts[7],
           };
@@ -521,7 +522,8 @@ ipcMain.handle('import-chrome-cookies', async (_e, { domainFilter } = {}) => {
       for (const row of rows) {
         total++;
         try {
-          const encBuf = Buffer.from(row.encrypted, 'binary');
+          if (!row.encryptedHex) continue;
+          const encBuf = Buffer.from(row.encryptedHex, 'hex');
           if (encBuf.length < 3) continue;
           const prefix = encBuf.slice(0, 3).toString();
           if (prefix !== 'v10' && prefix !== 'v11') continue;
@@ -760,6 +762,55 @@ ipcMain.handle('file-exists', (_e, filepath) => {
   try { return !!filepath && fs.existsSync(filepath); } catch (_) { return false; }
 });
 
+// Scan the download folder and add any untracked media files to history.
+// Called when the Library view opens — catches files yt-dlp wrote but
+// didn't surface via `--print after_move`.
+ipcMain.handle('reconcile-library', () => {
+  if (!selectedDownloadFolder || !fs.existsSync(selectedDownloadFolder)) return { added: 0 };
+  const existing = new Set(loadHistory().map((e) => e.filepath).filter(Boolean));
+  function walk(dir, depth = 3) {
+    if (depth < 0) return [];
+    let list = [];
+    try {
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (ent.name.startsWith('.')) continue;
+        const full = path.join(dir, ent.name);
+        if (ent.isDirectory()) list.push(...walk(full, depth - 1));
+        else if (/\.(mp3|m4a|webm|mp4|mkv|mov|flac|ogg|wav|opus|aac)$/i.test(ent.name)) list.push(full);
+      }
+    } catch (_) {}
+    return list;
+  }
+  const files = walk(selectedDownloadFolder);
+  const toAdd = files.filter((f) => !existing.has(f));
+  if (toAdd.length === 0) return { added: 0 };
+  const history = loadHistory();
+  for (const fp of toAdd) {
+    const rel = path.relative(selectedDownloadFolder, fp);
+    const parts = rel.split(path.sep);
+    const playlist = parts.length > 1 ? parts[0].replace(/_/g, ' ') : null;
+    const basename = path.basename(fp, path.extname(fp));
+    const title = basename.replace(/_/g, ' ').replace(/^\d{3}\s*[-_]\s*/, '').trim();
+    const ext = path.extname(fp).slice(1).toLowerCase();
+    let stat = null; try { stat = fs.statSync(fp); } catch (_) {}
+    history.unshift({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      url: null,
+      format: ext,
+      title,
+      uploader: null,
+      thumbnail: null,
+      filepath: fp,
+      folder: selectedDownloadFolder,
+      timestamp: stat ? new Date(stat.mtimeMs).toISOString() : new Date().toISOString(),
+      playlist,
+      reconciled: true,
+    });
+  }
+  saveHistory(history);
+  return { added: toAdd.length };
+});
+
 // Compute SHA256 of a completed file for duplicate-content detection.
 const crypto = require('crypto');
 ipcMain.handle('file-hash', async (_e, filepath) => {
@@ -987,7 +1038,10 @@ function broadcastQueue() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('queue-state', {
     active: Array.from(activeDownloads.entries()).map(([id, d]) => ({
-      id, url: d.url, format: d.format, title: d.title || null,
+      id, url: d.url, format: d.format,
+      title: d.title || null,
+      thumbnail: d.thumbnail || null,
+      uploader: d.uploader || null,
       percent: d.percent || 0, speed: d.speed || '', eta: d.eta || '',
       item: d.currentItem || null, state: d.state || 'running',
     })),
@@ -1011,7 +1065,7 @@ function pumpDownloads() {
   broadcastQueue();
 }
 
-async function startOneDownload(event, downloadId, { url, format, playlist, subtitles, cookiesBrowser, formatId, startTime, endTime, resume }) {
+async function startOneDownload(event, downloadId, { url, format, playlist, subtitles, cookiesBrowser, formatId, startTime, endTime, resume, prefetchedMeta }) {
   if (!selectedDownloadFolder) {
     return event.sender.send('download-error', 'No folder selected. Please select a download folder first.');
   }
@@ -1025,8 +1079,23 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
     event.sender.send(channel, out);
   };
 
-  activeDownloads.set(downloadId, { proc: null, url, format, title: null, percent: 0, state: 'starting' });
+  activeDownloads.set(downloadId, {
+    proc: null, url, format,
+    title: prefetchedMeta && prefetchedMeta.title ? prefetchedMeta.title : null,
+    thumbnail: prefetchedMeta && prefetchedMeta.thumbnail ? prefetchedMeta.thumbnail : null,
+    uploader: prefetchedMeta && prefetchedMeta.uploader ? prefetchedMeta.uploader : null,
+    percent: 0, state: 'starting',
+  });
   broadcastQueue();
+  // Push an early meta event so the Download tab shows the title/thumb now
+  // instead of waiting for yt-dlp's slow --dump-single-json probe.
+  if (prefetchedMeta && (prefetchedMeta.title || prefetchedMeta.thumbnail)) {
+    send('download-meta', {
+      title: prefetchedMeta.title || null,
+      uploader: prefetchedMeta.uploader || null,
+      thumbnail: prefetchedMeta.thumbnail || null,
+    });
+  }
 
   send('download-status', playlist ? 'Fetching playlist info…' : 'Fetching video info…');
 
@@ -1127,6 +1196,65 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
     myDownload.title = meta.title;
   }
   broadcastQueue();
+
+  // Direct stdout parser — more reliable than yt-dlp-wrap's progress events
+  // Catches [download] lines + post-processing phases (ExtractAudio, Merger)
+  // and interpolates percent when yt-dlp is silent (e.g. during ffmpeg).
+  if (currentDownload.ytDlpProcess && currentDownload.ytDlpProcess.stdout) {
+    let lineBuf = '';
+    let lastPct = 0;
+    let lastProgressTs = Date.now();
+    currentDownload.ytDlpProcess.stdout.on('data', (buf) => {
+      lineBuf += buf.toString();
+      const lines = lineBuf.split(/\r?\n/);
+      lineBuf = lines.pop() || '';
+      for (const line of lines) {
+        // [download]  33.2% of  2.48MiB at 1.20MiB/s ETA 00:02
+        const m = line.match(/\[download\]\s+([\d.]+)%\s+of\s+~?\s*([\d.]+\s*[KMG]?i?B)?(?:\s+at\s+([\d.]+\s*[KMG]?i?B\/s))?(?:\s+ETA\s+([\d:]+))?/);
+        if (m) {
+          const pct = parseFloat(m[1]) || 0;
+          const size = m[2] || '';
+          const speed = m[3] || '';
+          const eta = m[4] || '';
+          lastPct = pct;
+          lastProgressTs = Date.now();
+          send('download-progress', { percent: pct.toFixed(1), speed, eta, size, item: currentItem });
+          const d = activeDownloads.get(downloadId);
+          if (d) { d.percent = pct; d.speed = speed; d.eta = eta; d.currentItem = currentItem; broadcastQueue(); }
+          broadcastToExtensions({ type: 'progress', percent: pct, eta });
+          continue;
+        }
+        // Post-processing phase — send a status nudge so user sees something is happening
+        if (/\[ExtractAudio\]|\[ffmpeg\]|\[Merger\]/i.test(line)) {
+          lastProgressTs = Date.now();
+          send('download-status', line.trim().slice(0, 160));
+          const d = activeDownloads.get(downloadId);
+          if (d) { d.speed = 'Converting…'; d.eta = ''; broadcastQueue(); }
+        }
+        if (line.startsWith('after_move:filepath=')) {
+          // Handled already via ytDlpEvent; ignore duplicate here.
+          continue;
+        }
+      }
+    });
+    // Heartbeat: if no progress line in 800ms, nudge an interim percent so the
+    // bar animates instead of appearing stuck.
+    const heartbeat = setInterval(() => {
+      if (Date.now() - lastProgressTs > 800 && lastPct < 99) {
+        const d = activeDownloads.get(downloadId);
+        if (d && d.state === 'running') {
+          // Creep the bar forward slowly to show activity during ffmpeg
+          const bump = Math.min(99, lastPct + 0.5);
+          if (bump > lastPct) {
+            lastPct = bump;
+            d.percent = bump;
+            broadcastQueue();
+          }
+        }
+      }
+    }, 400);
+    currentDownload.ytDlpProcess.on('close', () => clearInterval(heartbeat));
+  }
   const completed = [];
   let currentItem = null;
   const startedAt = Date.now();
@@ -1214,8 +1342,42 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
     pumpDownloads();
   });
 
+  // Scan a directory tree for media files newer than sinceMs
+  function scanRecentMedia(dir, sinceMs, maxDepth = 3) {
+    const out = [];
+    if (!dir || !fs.existsSync(dir) || maxDepth < 0) return out;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return out; }
+    for (const ent of entries) {
+      const full = path.join(dir, ent.name);
+      if (ent.name.startsWith('.')) continue;
+      if (ent.isDirectory()) {
+        out.push(...scanRecentMedia(full, sinceMs, maxDepth - 1));
+      } else {
+        try {
+          const stat = fs.statSync(full);
+          if (stat.mtimeMs >= sinceMs && /\.(mp3|m4a|webm|mp4|mkv|mov|flac|ogg|wav|opus|aac)$/i.test(ent.name)) {
+            out.push(full);
+          }
+        } catch (_) {}
+      }
+    }
+    return out;
+  }
+
   currentDownload.on('close', (code) => {
     const durationMs = Date.now() - startedAt;
+    // Fallback: scan for any media files created since this download started
+    // that weren't captured via `--print after_move`. Covers archive-skipped
+    // items, format-conversion quirks, and missing print hooks.
+    try {
+      const scanDir = playlist && meta.title
+        ? path.join(selectedDownloadFolder, meta.title.replace(/[\\/:*?"<>|]/g, '_'))
+        : selectedDownloadFolder;
+      const fallback = scanRecentMedia(scanDir, startedAt - 2000);
+      const set = new Set(completed.map((p) => p));
+      for (const fp of fallback) if (!set.has(fp)) completed.push(fp);
+    } catch (_) {}
     if (lastStartedIndex != null && lastStartedIndex !== lastCompletedIndex) {
       send('item-state', { index: lastStartedIndex, state: 'error', error: 'Item failed or unavailable' });
     }
@@ -1261,12 +1423,19 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
     const now = new Date().toISOString();
     const paths = completed.length ? completed : [null];
     let entries;
+    const existingByPath = new Set(loadHistory().map((e) => e.filepath).filter(Boolean));
     for (const fp of paths) {
+      // Skip duplicates — important after scanRecentMedia picks up files
+      // that may already be in history from a previous run.
+      if (fp && existingByPath.has(fp)) continue;
       const isPl = playlist && paths.length > 1;
+      const prettyTitle = fp
+        ? path.basename(fp, path.extname(fp)).replace(/_/g, ' ').replace(/^\d{3}\s*[-_]\s*/, '').trim()
+        : null;
       entries = addHistoryEntry({
         url,
         format,
-        title: isPl && fp ? path.basename(fp) : meta.title,
+        title: prettyTitle || (meta.title || null),
         uploader: meta.uploader,
         thumbnail: meta.thumbnail,
         filepath: fp,
@@ -1276,6 +1445,7 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
         playlist: isPl ? meta.title : null,
       });
     }
+    if (!entries) entries = loadHistory();
     send('download-complete', {
       filepath: completed[0] || null,
       count: completed.length,

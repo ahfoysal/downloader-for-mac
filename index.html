@@ -860,9 +860,16 @@
     }
     .fab-sheet-chip .chip-label { font-weight: 600; }
     .fab-sheet-chip .chip-size { font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-    .fab-sheet-chip.primary {
+    .fab-sheet-chip.primary,
+    .fab-sheet-chip.selected {
       background: var(--accent-soft);
       border-color: var(--accent);
+    }
+    .fab-sheet-chip.selected::after {
+      content: '★';
+      margin-left: 6px;
+      color: var(--accent);
+      font-size: 10px;
     }
     .fab-sheet-loading {
       text-align: center;

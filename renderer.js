@@ -492,6 +492,8 @@ const librarySearch = $('librarySearch');
 librarySearch.addEventListener('input', renderLibrary);
 
 async function renderLibrary() {
+  // First, auto-heal: scan download folder for orphan files and add them to history
+  try { await api.reconcileLibrary(); } catch (_) {}
   const entries = await api.getHistory();
   state.history = entries;
   const q = librarySearch.value.trim().toLowerCase();
@@ -876,14 +878,27 @@ async function getLiveWebviewInfo() {
   if (!webview) return { title: null, thumbnail: null };
   try {
     const info = await webview.executeJavaScript(`(function(){
-      const og = document.querySelector('meta[property="og:image"]');
-      const tw = document.querySelector('meta[name="twitter:image"]');
-      const poster = document.querySelector('video[poster]');
-      let thumb = (og && og.content) || (tw && tw.content) || (poster && poster.poster) || null;
+      // For YouTube watch pages, ALWAYS prefer the video-ID-derived thumbnail
+      // over og:image (which is often just the YouTube brand logo for radio/
+      // auto-generated playlists).
       const ytMatch = location.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/) || location.href.match(/youtu\\.be\\/([a-zA-Z0-9_-]{11})/);
-      if (!thumb && ytMatch) thumb = 'https://i.ytimg.com/vi/' + ytMatch[1] + '/hqdefault.jpg';
-      const titleMeta = document.querySelector('meta[property="og:title"]');
-      return { title: (titleMeta && titleMeta.content) || document.title || '', thumbnail: thumb, uploader: (document.querySelector('ytd-video-owner-renderer #text a') || {}).innerText || null };
+      let thumb = ytMatch ? 'https://i.ytimg.com/vi/' + ytMatch[1] + '/maxresdefault.jpg' : null;
+      if (!thumb) {
+        const og = document.querySelector('meta[property="og:image"]');
+        const tw = document.querySelector('meta[name="twitter:image"]');
+        const poster = document.querySelector('video[poster]');
+        thumb = (og && og.content) || (tw && tw.content) || (poster && poster.poster) || null;
+      }
+      // Prefer the actual YouTube video title element over og:title (which
+      // changes slowly during SPA navigation). Try multiple selectors.
+      const ytTitle = document.querySelector('h1.ytd-watch-metadata, h1.title, #title h1, ytd-video-primary-info-renderer h1');
+      const ogTitle = document.querySelector('meta[property="og:title"]');
+      let title = (ytTitle && ytTitle.textContent.trim()) || (ogTitle && ogTitle.content) || document.title || '';
+      // Strip site suffix ' - YouTube'
+      title = title.replace(/\\s*[-–—]\\s*YouTube\\s*$/i, '');
+      const uploaderEl = document.querySelector('ytd-video-owner-renderer #text a, ytd-channel-name a, #owner-name a, #channel-name a');
+      const uploader = (uploaderEl && uploaderEl.textContent.trim()) || null;
+      return { title, thumbnail: thumb, uploader };
     })();`);
     return info || { title: null, thumbnail: null };
   } catch (_) { return { title: null, thumbnail: null }; }
@@ -900,6 +915,13 @@ async function openFabSheet(url) {
   // 1) Paint the sheet instantly with presets — user can click before we even hit yt-dlp
   videoGrid.innerHTML = chipsHtml(VIDEO_PRESETS);
   audioGrid.innerHTML = chipsHtml(AUDIO_PRESETS);
+  // Highlight last-picked format as the "default" selection
+  const lastPick = state.settings && state.settings.lastFabChoice;
+  if (lastPick && lastPick.fmt) {
+    const targetGrid = lastPick.tile === 'video' ? videoGrid : audioGrid;
+    const chip = targetGrid.querySelector(`[data-fmt="${lastPick.fmt}"]`);
+    if (chip) chip.classList.add('selected');
+  }
   titleEl.textContent = 'Loading…';
   subEl.innerHTML = '<span class="fab-sheet-spinner"></span>Picking formats';
   thumb.src = '';
