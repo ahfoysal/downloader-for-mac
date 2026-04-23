@@ -765,6 +765,44 @@ function initBrowse() {
 }
 
 // ===== FAB quick-pick sheet =====
+const probeCache = new Map();  // url -> probe result (hot cache)
+
+const VIDEO_PRESETS = [
+  { label: 'Best', sub: 'mp4', tile: 'video', fmt: 'best' },
+  { label: '1080p', sub: 'mp4', tile: 'video', fmt: '1080' },
+  { label: '720p',  sub: 'mp4', tile: 'video', fmt: '720' },
+  { label: '480p',  sub: 'mp4', tile: 'video', fmt: '480' },
+];
+const AUDIO_PRESETS = [
+  { label: 'MP3', sub: 'converted', tile: 'audio', fmt: 'mp3' },
+  { label: 'M4A', sub: 'native AAC', tile: 'audio', fmt: 'm4a' },
+  { label: 'WebM', sub: 'original', tile: 'audio', fmt: 'webm' },
+];
+
+function chipsHtml(presets) {
+  return presets.map((p) =>
+    `<button class="fab-sheet-chip" data-tile="${p.tile}" data-fmt="${p.fmt}"><span class="chip-label">${p.label}</span><span class="chip-size">${p.sub}</span></button>`
+  ).join('');
+}
+
+async function getLiveWebviewInfo() {
+  const webview = $('browseView');
+  if (!webview) return { title: null, thumbnail: null };
+  try {
+    const info = await webview.executeJavaScript(`(function(){
+      const og = document.querySelector('meta[property="og:image"]');
+      const tw = document.querySelector('meta[name="twitter:image"]');
+      const poster = document.querySelector('video[poster]');
+      let thumb = (og && og.content) || (tw && tw.content) || (poster && poster.poster) || null;
+      const ytMatch = location.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/) || location.href.match(/youtu\\.be\\/([a-zA-Z0-9_-]{11})/);
+      if (!thumb && ytMatch) thumb = 'https://i.ytimg.com/vi/' + ytMatch[1] + '/hqdefault.jpg';
+      const titleMeta = document.querySelector('meta[property="og:title"]');
+      return { title: (titleMeta && titleMeta.content) || document.title || '', thumbnail: thumb, uploader: (document.querySelector('ytd-video-owner-renderer #text a') || {}).innerText || null };
+    })();`);
+    return info || { title: null, thumbnail: null };
+  } catch (_) { return { title: null, thumbnail: null }; }
+}
+
 async function openFabSheet(url) {
   const backdrop = $('fabSheetBackdrop');
   const thumb = $('fabSheetThumb');
@@ -772,61 +810,28 @@ async function openFabSheet(url) {
   const subEl = $('fabSheetSub');
   const videoGrid = $('fabSheetVideo');
   const audioGrid = $('fabSheetAudio');
-  titleEl.textContent = 'Analyzing…';
-  subEl.innerHTML = '<span class="fab-sheet-spinner"></span>Fetching formats';
+
+  // 1) Paint the sheet instantly with presets — user can click before we even hit yt-dlp
+  videoGrid.innerHTML = chipsHtml(VIDEO_PRESETS);
+  audioGrid.innerHTML = chipsHtml(AUDIO_PRESETS);
+  titleEl.textContent = 'Loading…';
+  subEl.innerHTML = '<span class="fab-sheet-spinner"></span>Picking formats';
   thumb.src = '';
-  videoGrid.innerHTML = '<div class="fab-sheet-loading">Loading…</div>';
-  audioGrid.innerHTML = '';
   backdrop.classList.add('show');
 
-  const res = await api.probeFormats(url);
-  if (!res.ok) {
-    titleEl.textContent = 'Could not analyze';
-    subEl.textContent = res.error || 'Unknown error';
-    videoGrid.innerHTML = '';
-    return;
-  }
-  thumb.src = res.thumbnail || '';
-  titleEl.textContent = res.title || 'Untitled';
-  const parts = [];
-  if (res.uploader) parts.push(res.uploader);
-  if (res.duration) parts.push(fmtDur(res.duration));
-  subEl.textContent = parts.join(' · ');
-
-  // Preset video qualities
-  const presets = [
-    { label: 'Best', sub: 'mp4', tile: 'video', fmt: 'best' },
-    { label: '1080p', sub: 'mp4', tile: 'video', fmt: '1080' },
-    { label: '720p',  sub: 'mp4', tile: 'video', fmt: '720' },
-    { label: '480p',  sub: 'mp4', tile: 'video', fmt: '480' },
-  ];
-  videoGrid.innerHTML = presets.map((p) =>
-    `<button class="fab-sheet-chip" data-tile="${p.tile}" data-fmt="${p.fmt}"><span class="chip-label">${p.label}</span><span class="chip-size">${p.sub}</span></button>`
-  ).join('');
-
-  const audioPresets = [
-    { label: 'MP3', sub: 'converted', tile: 'audio', fmt: 'mp3' },
-    { label: 'M4A', sub: 'native AAC', tile: 'audio', fmt: 'm4a' },
-    { label: 'WebM', sub: 'original', tile: 'audio', fmt: 'webm' },
-  ];
-  audioGrid.innerHTML = audioPresets.map((p) =>
-    `<button class="fab-sheet-chip" data-tile="${p.tile}" data-fmt="${p.fmt}"><span class="chip-label">${p.label}</span><span class="chip-size">${p.sub}</span></button>`
-  ).join('');
-
+  let picked = false;
   function pick(ev) {
     const chip = ev.target.closest('.fab-sheet-chip');
-    if (!chip) return;
+    if (!chip || picked) return;
+    picked = true;
     const format = chip.dataset.fmt;
     state.analyzedUrl = url;
-    state.meta = res;
     state.urlInput = url;
     state.selectedTile = chip.dataset.tile;
     state.selectedFormatId = null;
-    // Sync the tile selects so Download tab stays consistent
     if (chip.dataset.tile === 'video') { $('videoQuality').value = format; $('tileVideo').classList.add('selected'); $('tileAudio').classList.remove('selected'); }
     else { $('audioFormat').value = format; $('tileAudio').classList.add('selected'); $('tileVideo').classList.remove('selected'); }
     closeFabSheet();
-    // Fire the download in-place (don't switch to Download tab; toast feedback only)
     const opts = {
       playlist: /[?&]list=|\/playlist\?|\/channel\//i.test(url),
       subtitles: $('optSubs').checked,
@@ -837,8 +842,88 @@ async function openFabSheet(url) {
     api.downloadAudio(url, format, opts);
     toast(`Downloading ${format.toUpperCase()} — track in Download tab`, 'success');
   }
-  videoGrid.addEventListener('click', pick, { once: true });
-  audioGrid.addEventListener('click', pick, { once: true });
+  videoGrid.addEventListener('click', pick);
+  audioGrid.addEventListener('click', pick);
+
+  // 2) In parallel: pull title + thumbnail from the live webview DOM (instant — no network)
+  getLiveWebviewInfo().then((live) => {
+    if (live.title) titleEl.textContent = live.title;
+    if (live.thumbnail) thumb.src = live.thumbnail;
+    if (!live.title) titleEl.textContent = '—';
+  });
+
+  // 3) Check cache — skip yt-dlp probe if we already have fresh data
+  if (probeCache.has(url)) {
+    applyProbeResult(probeCache.get(url));
+    return;
+  }
+
+  // 4) Kick off the real probe in the background — upgrade the sheet when done
+  api.probeFormats(url).then((res) => {
+    if (!res.ok) {
+      // Keep presets; just stop the spinner
+      subEl.textContent = '—';
+      return;
+    }
+    probeCache.set(url, res);
+    // Expire cache after 60s
+    setTimeout(() => probeCache.delete(url), 60 * 1000);
+    applyProbeResult(res);
+  });
+
+  function applyProbeResult(res) {
+    state.meta = res;
+    if (res.title) titleEl.textContent = res.title;
+    if (res.thumbnail && !thumb.src) thumb.src = res.thumbnail;
+    const parts = [];
+    if (res.uploader) parts.push(res.uploader);
+    if (res.duration) parts.push(fmtDur(res.duration));
+    subEl.textContent = parts.join(' · ') || '—';
+    // Append real-format chips with file sizes
+    const videos = (res.formats || []).filter((f) => f.vcodec).sort((a, b) => (b.height || 0) - (a.height || 0));
+    const audios = (res.formats || []).filter((f) => !f.vcodec && f.acodec).sort((a, b) => (b.abr || 0) - (a.abr || 0));
+    const realVideos = videos.slice(0, 4).map((f) =>
+      `<button class="fab-sheet-chip" data-fmt-id="${f.format_id}" data-tile="video"><span class="chip-label">${f.height ? f.height + 'p' : 'video'}</span><span class="chip-size">${f.ext}${f.filesize ? ' · ' + fmtBytes(f.filesize) : ''}</span></button>`
+    ).join('');
+    const realAudios = audios.slice(0, 3).map((f) =>
+      `<button class="fab-sheet-chip" data-fmt-id="${f.format_id}" data-tile="audio"><span class="chip-label">${Math.round(f.abr || f.tbr || 0)}k</span><span class="chip-size">${f.ext}${f.filesize ? ' · ' + fmtBytes(f.filesize) : ''}</span></button>`
+    ).join('');
+    if (realVideos) videoGrid.insertAdjacentHTML('beforeend', realVideos);
+    if (realAudios) audioGrid.insertAdjacentHTML('beforeend', realAudios);
+    // Wire up direct format-id picks (these bypass presets)
+    videoGrid.querySelectorAll('[data-fmt-id]').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        if (picked) return;
+        picked = true;
+        const fmtId = chip.dataset.fmtId;
+        closeFabSheet();
+        api.downloadAudio(url, 'best', {
+          playlist: /[?&]list=|\/playlist\?|\/channel\//i.test(url),
+          subtitles: $('optSubs').checked,
+          cookiesBrowser: $('optCookies').value,
+          formatId: fmtId,
+          resume: $('optResume').checked,
+        });
+        toast(`Downloading — track in Download tab`, 'success');
+      });
+    });
+    audioGrid.querySelectorAll('[data-fmt-id]').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        if (picked) return;
+        picked = true;
+        const fmtId = chip.dataset.fmtId;
+        closeFabSheet();
+        api.downloadAudio(url, 'mp3', {
+          playlist: /[?&]list=|\/playlist\?|\/channel\//i.test(url),
+          subtitles: false,
+          cookiesBrowser: $('optCookies').value,
+          formatId: fmtId,
+          resume: $('optResume').checked,
+        });
+        toast(`Downloading — track in Download tab`, 'success');
+      });
+    });
+  }
 }
 function closeFabSheet() {
   $('fabSheetBackdrop').classList.remove('show');
