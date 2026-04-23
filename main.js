@@ -781,6 +781,51 @@ function loadProbeCache() {
 function saveProbeCache(cache) {
   try { fs.writeFileSync(probeCachePath, JSON.stringify(cache)); } catch (_) {}
 }
+// LRCLIB — free, no auth, synced lyrics
+ipcMain.handle('fetch-lyrics', async (_e, { artist, title }) => {
+  if (!title) return { ok: false, error: 'no title' };
+  return new Promise((resolve) => {
+    const q = new URLSearchParams({ artist_name: artist || '', track_name: title });
+    const url = `https://lrclib.net/api/get?${q}`;
+    https.get(url, { headers: { 'User-Agent': 'DownloaderForMac/2.1' } }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try {
+            const json = JSON.parse(data);
+            resolve({ ok: true, synced: json.syncedLyrics || null, plain: json.plainLyrics || null });
+          } catch (_) { resolve({ ok: false, error: 'parse' }); }
+        } else {
+          // Try search endpoint as fallback
+          const s = new URLSearchParams({ q: `${artist || ''} ${title}`.trim() });
+          https.get(`https://lrclib.net/api/search?${s}`, { headers: { 'User-Agent': 'DownloaderForMac/2.1' } }, (r2) => {
+            let d2 = '';
+            r2.on('data', (c) => { d2 += c; });
+            r2.on('end', () => {
+              try {
+                const list = JSON.parse(d2);
+                if (Array.isArray(list) && list.length) {
+                  resolve({ ok: true, synced: list[0].syncedLyrics || null, plain: list[0].plainLyrics || null });
+                } else resolve({ ok: false, error: 'not found' });
+              } catch (_) { resolve({ ok: false, error: 'parse' }); }
+            });
+          }).on('error', () => resolve({ ok: false, error: 'net' }));
+        }
+      });
+    }).on('error', () => resolve({ ok: false, error: 'net' }));
+  });
+});
+
+// Activity log — ring buffer of last 500 events
+const activityLog = [];
+function logActivity(type, msg) {
+  activityLog.unshift({ ts: new Date().toISOString(), type, msg });
+  if (activityLog.length > 500) activityLog.pop();
+}
+ipcMain.handle('get-activity-log', () => activityLog);
+ipcMain.handle('clear-activity-log', () => { activityLog.length = 0; return []; });
+
 ipcMain.handle('probe-cache-get', (_e, url) => {
   const cache = loadProbeCache();
   return cache[url] ? cache[url].data : null;
@@ -1146,6 +1191,7 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
     uploader: prefetchedMeta && prefetchedMeta.uploader ? prefetchedMeta.uploader : null,
     percent: 0, state: 'starting',
   });
+  logActivity('start', `${format.toUpperCase()} · ${prefetchedMeta && prefetchedMeta.title ? prefetchedMeta.title : url}`);
   broadcastQueue();
   // Push an early meta event so the Download tab shows the title/thumb now
   // instead of waiting for yt-dlp's slow --dump-single-json probe.

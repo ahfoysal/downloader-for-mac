@@ -518,10 +518,13 @@ async function renderLibrary() {
   }
   container.innerHTML = `<div class="lib-grid">` + filtered.map((e) => {
     const resume = e._pos && e._pos.duration ? Math.round((e._pos.pos / e._pos.duration) * 100) : 0;
-    const isAudio = ['mp3', 'm4a', 'webm'].includes(e.format);
+    const isAudio = ['mp3', 'm4a', 'webm', 'flac', 'ogg', 'wav', 'opus', 'aac'].includes((e.format || '').toLowerCase());
+    const icon = isAudio
+      ? `<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`
+      : `<svg viewBox="0 0 24 24" width="36" height="36" fill="currentColor"><polygon points="8 5 19 12 8 19 8 5"/></svg>`;
     const thumb = e.thumbnail
-      ? `<img class="lib-card-thumb" src="${e.thumbnail}" onerror="this.outerHTML='<div class=\\'lib-card-thumb-placeholder\\'>${isAudio ? '♪' : '▶'}</div>'" />`
-      : `<div class="lib-card-thumb-placeholder">${isAudio ? '♪' : '▶'}</div>`;
+      ? `<img class="lib-card-thumb" src="${e.thumbnail}" onerror="this.outerHTML='<div class=\\'lib-card-thumb-placeholder\\'>${icon.replace(/'/g, '&apos;').replace(/"/g, '&quot;')}</div>'" />`
+      : `<div class="lib-card-thumb-placeholder">${icon}</div>`;
     return `
       <div class="lib-card ${e._exists ? '' : 'missing'}" data-path="${(e.filepath || '').replace(/"/g, '&quot;')}" data-title="${(e.title || '').replace(/"/g, '&quot;')}">
         ${thumb}
@@ -843,6 +846,18 @@ playerVideo.addEventListener('pause', () => {
 });
 
 // Queue list in expanded player
+const PLACEHOLDER_SVG = `<svg viewBox="0 0 24 24" width="40%" height="40%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-dim);"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
+const PLACEHOLDER_VIDEO_SVG = `<svg viewBox="0 0 24 24" width="40%" height="40%" fill="currentColor" style="color:var(--text-dim);"><polygon points="8 5 19 12 8 19 8 5"/></svg>`;
+
+function thumbHtml(entry, cls = 'pq-thumb') {
+  const isAudio = entry && ['mp3', 'm4a', 'webm', 'flac', 'ogg', 'wav', 'opus', 'aac'].includes((entry.format || '').toLowerCase());
+  const icon = isAudio ? PLACEHOLDER_SVG : PLACEHOLDER_VIDEO_SVG;
+  if (entry && entry.thumbnail) {
+    return `<div class="${cls} thumb-wrap"><img src="${entry.thumbnail}" class="${cls}-img" onerror="this.parentNode.innerHTML='${icon.replace(/'/g, '&apos;').replace(/"/g, '&quot;')}'" /></div>`;
+  }
+  return `<div class="${cls} thumb-wrap thumb-empty">${icon}</div>`;
+}
+
 function renderQueueList() {
   const list = $('playerQueue');
   if (!list) return;
@@ -850,9 +865,7 @@ function renderQueueList() {
   const rows = playlistForPlayer.map((e, i) => {
     const title = e.title || 'Untitled';
     const artist = e.uploader || '';
-    const thumb = e.thumbnail
-      ? `<img class="pq-thumb" src="${e.thumbnail}" />`
-      : `<div class="pq-thumb"></div>`;
+    const thumb = thumbHtml(e, 'pq-thumb');
     return `<div class="pq-item ${i === playerIdx ? 'playing' : ''}" data-idx="${i}">
       ${thumb}
       <div class="pq-title">${(i === playerIdx ? '▶ ' : (i + 1) + '. ') + title.replace(/</g, '&lt;')}</div>

@@ -24,6 +24,29 @@
       --success: #4ade80;
       --success-soft: rgba(74, 222, 128, 0.12);
       --warn: #fbbf24;
+    }
+    body.theme-light {
+      --bg: #f7f7f9;
+      --surface: #ffffff;
+      --surface-2: #f0f0f3;
+      --surface-3: #e4e4ea;
+      --border: #d8d8de;
+      --border-strong: #b8b8c0;
+      --text: #101018;
+      --text-muted: #58585e;
+      --text-dim: #888890;
+      --danger: #dc2626;
+      --success: #16a34a;
+    }
+    body.accent-teal   { --accent: #5eead4; --accent-strong: #14b8a6; --accent-soft: rgba(94,234,212,0.12); }
+    body.accent-purple { --accent: #c084fc; --accent-strong: #9333ea; --accent-soft: rgba(192,132,252,0.12); }
+    body.accent-pink   { --accent: #f472b6; --accent-strong: #ec4899; --accent-soft: rgba(244,114,182,0.12); }
+    body.accent-blue   { --accent: #60a5fa; --accent-strong: #2563eb; --accent-soft: rgba(96,165,250,0.12); }
+    body.accent-orange { --accent: #fb923c; --accent-strong: #ea580c; --accent-soft: rgba(251,146,60,0.12); }
+    body.accent-green  { --accent: #4ade80; --accent-strong: #16a34a; --accent-soft: rgba(74,222,128,0.12); }
+    body.accent-red    { --accent: #f87171; --accent-strong: #dc2626; --accent-soft: rgba(248,113,113,0.12); }
+    body.accent-yellow { --accent: #fbbf24; --accent-strong: #d97706; --accent-soft: rgba(251,191,36,0.12); }
+    :root {
       --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.2);
       --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
       --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.45);
@@ -793,8 +816,11 @@
       aspect-ratio: 16/9;
       border-radius: 8px;
       object-fit: cover;
-      background: var(--surface-2);
+      background: linear-gradient(135deg, var(--surface-2), var(--surface-3));
       flex-shrink: 0;
+    }
+    .fab-sheet-thumb:not([src]), .fab-sheet-thumb[src=""] {
+      background: linear-gradient(135deg, var(--surface-2), var(--surface-3));
     }
     .fab-sheet-info {
       flex: 1;
@@ -1412,12 +1438,25 @@
     .pq-item:hover { background: var(--surface); }
     .pq-item.playing { background: var(--accent-soft); }
     .pq-item .pq-thumb {
-      width: 36px;
-      height: 36px;
-      border-radius: 4px;
-      object-fit: cover;
+      width: 40px;
+      height: 40px;
+      border-radius: 5px;
+      overflow: hidden;
       background: var(--surface-2);
       flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .pq-item .pq-thumb img,
+    .pq-item .pq-thumb-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .thumb-empty {
+      background: linear-gradient(135deg, var(--surface-2), var(--surface-3));
     }
     .pq-item .pq-title {
       flex: 1;
@@ -2025,6 +2064,52 @@
       </div>
     </div>
   </div>
+
+  <!-- ============ Command palette ============ -->
+  <div class="cmdk" id="cmdk">
+    <div class="cmdk-body">
+      <input type="text" class="cmdk-input" id="cmdkInput" placeholder="Type a command or search…" spellcheck="false" />
+      <div class="cmdk-list" id="cmdkList"></div>
+      <div class="cmdk-hint">
+        <kbd class="kbd">↑↓</kbd> navigate <kbd class="kbd">⏎</kbd> select <kbd class="kbd">Esc</kbd> close
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Keyboard help ============ -->
+  <div class="modal" id="helpModal">
+    <div class="modal-body" style="width:560px;">
+      <div class="modal-head">
+        <h2>Keyboard shortcuts</h2>
+      </div>
+      <div class="modal-content">
+        <div class="help-grid" id="helpGrid"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="helpClose">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Activity log ============ -->
+  <div class="modal" id="activityModal">
+    <div class="modal-body" style="width:620px;">
+      <div class="modal-head">
+        <h2>Activity log</h2>
+        <p>Last 500 events — useful for debugging.</p>
+      </div>
+      <div class="modal-content" style="max-height:60vh;overflow-y:auto;padding:4px 0;">
+        <div id="activityList"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="activityClose">Close</button>
+        <button class="btn btn-danger" id="activityClear">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Lyrics pane (in expanded player) ============ -->
+  <div class="lyrics-pane" id="lyricsPane"></div>
 
   <!-- ============ Toasts ============ -->
   <div class="toasts" id="toasts"></div>
