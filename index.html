@@ -543,6 +543,82 @@
       font-size: 11px;
     }
 
+    /* Queue panel (concurrent downloads) */
+    .queue-panel {
+      margin-top: 14px;
+      display: none;
+    }
+    .queue-panel.show { display: block; }
+    .queue-section-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin: 12px 0 6px;
+    }
+    .q-item {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      transition: border-color 0.15s, opacity 0.15s;
+    }
+    .q-item.active { border-color: rgba(3,218,198,0.35); }
+    .q-item.pending { opacity: 0.75; cursor: move; }
+    .q-item.pending:hover { opacity: 1; border-color: var(--accent); }
+    .q-item.dragging { opacity: 0.4; }
+    .q-item .q-body { flex: 1; min-width: 0; }
+    .q-item .q-title {
+      font-size: 12px;
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-bottom: 4px;
+    }
+    .q-item .q-meta {
+      font-size: 10px;
+      color: var(--muted);
+      display: flex;
+      gap: 6px;
+    }
+    .q-item .q-bar {
+      height: 3px;
+      background: var(--panel-2);
+      border-radius: 2px;
+      margin-top: 5px;
+      overflow: hidden;
+    }
+    .q-item .q-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 0.2s;
+    }
+    .q-item .q-cancel {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      padding: 4px 8px;
+      font-size: 10px;
+      border-radius: 5px;
+      width: auto;
+    }
+    .q-item .q-cancel:hover { color: var(--danger); border-color: var(--danger); }
+    .q-drag-handle {
+      color: var(--muted);
+      cursor: grab;
+      padding: 2px 4px;
+      flex-shrink: 0;
+    }
+    .q-drag-handle:active { cursor: grabbing; }
+
     /* Inline player */
     .player-card {
       display: none;
@@ -1033,6 +1109,8 @@
         <div class="status-meta" id="statusMeta"></div>
         <img class="thumb" id="thumb" />
       </div>
+
+      <div class="queue-panel" id="queuePanel"></div>
 
       <div class="playlist-card" id="playlistCard">
         <div class="playlist-header">
@@ -1985,6 +2063,92 @@
         toggleSidebar();
       }
     });
+
+    // ===== Queue panel (concurrent downloads) =====
+    const queuePanel = $('queuePanel');
+
+    function renderQueuePanel(state) {
+      if (!state) return;
+      const total = state.active.length + state.queued.length;
+      // Only show the panel when we have more than one download in play (concurrent mode)
+      if (total <= 1) { queuePanel.classList.remove('show'); queuePanel.innerHTML = ''; return; }
+      queuePanel.classList.add('show');
+      let html = '';
+      if (state.active.length > 0) {
+        html += `<div class="queue-section-label">Active · ${state.active.length}</div>`;
+        state.active.forEach((d) => {
+          const pct = Math.round(d.percent || 0);
+          html += `
+            <div class="q-item active" data-id="${d.id}">
+              <div class="q-body">
+                <div class="q-title">${(d.title || d.url || '').replace(/</g, '&lt;')}</div>
+                <div class="q-meta">
+                  <span>${(d.format || '').toUpperCase()}</span>
+                  <span>· ${pct}%</span>
+                  ${d.speed ? `<span>· ${d.speed}</span>` : ''}
+                  ${d.eta ? `<span>· ETA ${d.eta}</span>` : ''}
+                </div>
+                <div class="q-bar"><div class="q-bar-fill" style="width:${pct}%"></div></div>
+              </div>
+              <button class="q-cancel" data-cancel="${d.id}">×</button>
+            </div>
+          `;
+        });
+      }
+      if (state.queued.length > 0) {
+        html += `<div class="queue-section-label">Queued · ${state.queued.length}</div>`;
+        state.queued.forEach((d) => {
+          html += `
+            <div class="q-item pending" data-id="${d.id}" draggable="true">
+              <span class="q-drag-handle">⋮⋮</span>
+              <div class="q-body">
+                <div class="q-title">${(d.url || '').replace(/</g, '&lt;')}</div>
+                <div class="q-meta">
+                  <span>${(d.format || '').toUpperCase()}</span>
+                  <span>· waiting</span>
+                </div>
+              </div>
+              <button class="q-cancel" data-cancel="${d.id}">×</button>
+            </div>
+          `;
+        });
+      }
+      queuePanel.innerHTML = html;
+    }
+
+    queuePanel.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-cancel]');
+      if (!btn) return;
+      window.electronAPI.cancelDownloadById(btn.dataset.cancel);
+    });
+
+    // Drag-reorder pending items
+    let dragSrc = null;
+    queuePanel.addEventListener('dragstart', (e) => {
+      const el = e.target.closest('.q-item.pending');
+      if (!el) return;
+      dragSrc = el;
+      el.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', el.dataset.id); } catch (_) {}
+    });
+    queuePanel.addEventListener('dragover', (e) => {
+      const target = e.target.closest('.q-item.pending');
+      if (!target || !dragSrc) return;
+      e.preventDefault();
+      const rect = target.getBoundingClientRect();
+      const after = e.clientY > rect.top + rect.height / 2;
+      target.parentNode.insertBefore(dragSrc, after ? target.nextSibling : target);
+    });
+    queuePanel.addEventListener('dragend', () => {
+      if (dragSrc) dragSrc.classList.remove('dragging');
+      const ids = [...queuePanel.querySelectorAll('.q-item.pending')].map((el) => el.dataset.id);
+      window.electronAPI.reorderQueue(ids);
+      dragSrc = null;
+    });
+
+    window.electronAPI.onQueueState(renderQueuePanel);
+    window.electronAPI.getQueueState().then(renderQueuePanel);
 
     // ===== Tabs =====
     const tabs = document.querySelectorAll('.tab');

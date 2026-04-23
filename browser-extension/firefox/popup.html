@@ -175,9 +175,15 @@
   <input id="manualUrl" type="text" placeholder="https://…" spellcheck="false" />
   <button class="secondary" id="sendManual">Send pasted</button>
 
+  <img id="thumb" style="display:none;width:100%;border-radius:6px;margin-bottom:6px;max-height:120px;object-fit:cover;" />
+
   <div class="toggle-row">
     <input type="checkbox" id="autoSendToggle" />
     <label for="autoSendToggle" style="flex:1;cursor:pointer;">Auto-send on supported video pages</label>
+  </div>
+  <div class="toggle-row">
+    <input type="checkbox" id="interceptToggle" />
+    <label for="interceptToggle" style="flex:1;cursor:pointer;">Intercept browser downloads</label>
   </div>
 
   <div class="status" id="status"></div>

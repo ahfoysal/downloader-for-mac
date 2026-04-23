@@ -18,7 +18,7 @@
       "48": "icons/icon-48.png"
     }
   },
-  "permissions": ["contextMenus", "activeTab", "tabs", "storage", "notifications", "webNavigation", "nativeMessaging"],
+  "permissions": ["contextMenus", "activeTab", "tabs", "storage", "notifications", "webNavigation", "nativeMessaging", "downloads"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "scripts": ["background.js"]

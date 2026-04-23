@@ -47,16 +47,29 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
   chrome.runtime.sendMessage({ type: 'get-tab-media', tabId: tab.id }, (data) => {
     if (chrome.runtime.lastError) return;
     renderMedia(data && data.urls);
+    const thumbEl = document.getElementById('thumb');
+    if (data && data.thumbnail && thumbEl) {
+      thumbEl.src = data.thumbnail;
+      thumbEl.style.display = 'block';
+    }
   });
 });
 
-chrome.storage.local.get(['autoSendOnSupported'], (obj) => {
+const interceptToggle = document.getElementById('interceptToggle');
+chrome.storage.local.get(['autoSendOnSupported', 'interceptDownloads'], (obj) => {
   autoSendToggle.checked = !!obj.autoSendOnSupported;
+  if (interceptToggle) interceptToggle.checked = !!obj.interceptDownloads;
 });
 autoSendToggle.addEventListener('change', () => {
   chrome.storage.local.set({ autoSendOnSupported: autoSendToggle.checked });
   showStatus(autoSendToggle.checked ? 'Auto-send enabled' : 'Auto-send disabled');
 });
+if (interceptToggle) {
+  interceptToggle.addEventListener('change', () => {
+    chrome.storage.local.set({ interceptDownloads: interceptToggle.checked });
+    showStatus(interceptToggle.checked ? 'Download interception ON' : 'Download interception OFF');
+  });
+}
 
 sendCurrent.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'send-active' }, () => {

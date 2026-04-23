@@ -8,7 +8,10 @@ const YtDlpWrap = require('yt-dlp-wrap').default;
 
 const ytDlpWrap = new YtDlpWrap();
 let selectedDownloadFolder = null;
-let currentDownload = null;
+let currentDownload = null;         // kept for backwards compatibility — refers to most recent active download
+const activeDownloads = new Map();  // id -> { ytDlpWrap, url, format, opts, startedAt }
+const downloadQueue = [];           // { id, url, format, opts }
+let downloadSeq = 0;
 
 const userData = app.getPath('userData');
 const settingsPath = path.join(userData, 'settings.json');
@@ -799,25 +802,81 @@ ipcMain.on('retry-item', async (event, { url, format, index, playlistFolder, sub
   });
 });
 
-ipcMain.on('cancel-download', () => {
-  if (currentDownload && !currentDownload.killed) {
-    try {
-      currentDownload.ytDlpProcess && currentDownload.ytDlpProcess.kill('SIGTERM');
-    } catch (e) {
-      /* ignore */
+ipcMain.on('cancel-download', (_e, downloadId) => {
+  if (downloadId) {
+    const d = activeDownloads.get(downloadId);
+    if (d && d.proc && d.proc.ytDlpProcess) {
+      try { d.proc.ytDlpProcess.kill('SIGTERM'); } catch (_) {}
     }
+    // Also remove from queue if pending
+    const idx = downloadQueue.findIndex((q) => q.id === downloadId);
+    if (idx >= 0) downloadQueue.splice(idx, 1);
+    return;
+  }
+  // Fallback: cancel most recent if no id given
+  if (currentDownload && !currentDownload.killed) {
+    try { currentDownload.ytDlpProcess && currentDownload.ytDlpProcess.kill('SIGTERM'); } catch (_) {}
   }
 });
 
-ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, cookiesBrowser, formatId, startTime, endTime, resume }) => {
+ipcMain.handle('get-queue-state', () => ({
+  active: Array.from(activeDownloads.entries()).map(([id, d]) => ({ id, url: d.url, format: d.format, title: d.title, percent: d.percent || 0, speed: d.speed || '', eta: d.eta || '' })),
+  queued: downloadQueue.map((q) => ({ id: q.id, url: q.url, format: q.format })),
+  concurrency: appSettings.concurrency || 1,
+}));
+
+ipcMain.on('reorder-queue', (_e, orderedIds) => {
+  // Reorder pending queue items based on provided id list (ignores unknown ids)
+  const map = new Map(downloadQueue.map((q) => [q.id, q]));
+  const reordered = orderedIds.map((id) => map.get(id)).filter(Boolean);
+  downloadQueue.splice(0, downloadQueue.length, ...reordered);
+});
+
+// Broadcaster: push per-download events with id, and aggregate into whole-queue refresh.
+function broadcastQueue() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('queue-state', {
+    active: Array.from(activeDownloads.entries()).map(([id, d]) => ({
+      id, url: d.url, format: d.format, title: d.title || null,
+      percent: d.percent || 0, speed: d.speed || '', eta: d.eta || '',
+      item: d.currentItem || null, state: d.state || 'running',
+    })),
+    queued: downloadQueue.map((q) => ({ id: q.id, url: q.url, format: q.format })),
+  });
+}
+
+ipcMain.on('download-audio', async (event, params) => {
+  const id = 'd' + (++downloadSeq);
+  downloadQueue.push({ id, url: params.url, format: params.format, opts: params, event });
+  broadcastQueue();
+  pumpDownloads();
+});
+
+function pumpDownloads() {
+  const max = Math.max(1, Math.min(5, appSettings.concurrency || 1));
+  while (activeDownloads.size < max && downloadQueue.length > 0) {
+    const job = downloadQueue.shift();
+    startOneDownload(job.event, job.id, job.opts);
+  }
+  broadcastQueue();
+}
+
+async function startOneDownload(event, downloadId, { url, format, playlist, subtitles, cookiesBrowser, formatId, startTime, endTime, resume }) {
   if (!selectedDownloadFolder) {
     return event.sender.send('download-error', 'No folder selected. Please select a download folder first.');
   }
   const preset = FORMAT_PRESETS[format] || FORMAT_PRESETS.mp3;
 
   const send = (channel, payload) => {
-    if (!event.sender.isDestroyed()) event.sender.send(channel, payload);
+    if (event.sender.isDestroyed()) return;
+    const withId = (payload && typeof payload === 'object')
+      ? { ...payload, downloadId }
+      : { value: payload, downloadId };
+    event.sender.send(channel, withId);
   };
+
+  activeDownloads.set(downloadId, { proc: null, url, format, title: null, percent: 0, state: 'starting' });
+  broadcastQueue();
 
   send('download-status', playlist ? 'Fetching playlist info…' : 'Fetching video info…');
 
@@ -909,6 +968,13 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
   if (playlist) args.push('--ignore-errors');
 
   currentDownload = ytDlpWrap.exec(args);
+  const myDownload = activeDownloads.get(downloadId);
+  if (myDownload) {
+    myDownload.proc = currentDownload;
+    myDownload.state = 'running';
+    myDownload.title = meta.title;
+  }
+  broadcastQueue();
   const completed = [];
   let currentItem = null;
   const startedAt = Date.now();
@@ -928,6 +994,14 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
       item: currentItem,
     });
     broadcastToExtensions({ type: 'progress', percent: parseFloat(pct) || 0, eta: progress.eta || '' });
+    const m = activeDownloads.get(downloadId);
+    if (m) {
+      m.percent = parseFloat(pct) || 0;
+      m.speed = progress.currentSpeed || '';
+      m.eta = progress.eta || '';
+      m.currentItem = currentItem;
+      broadcastQueue();
+    }
   });
 
   let lastStartedIndex = null;
@@ -983,6 +1057,9 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
     console.error('yt-dlp error:', err);
     send('download-error', err && err.message ? err.message : String(err));
     currentDownload = null;
+    activeDownloads.delete(downloadId);
+    broadcastQueue();
+    pumpDownloads();
   });
 
   currentDownload.on('close', (code) => {
@@ -1017,10 +1094,16 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
           }
         })();
         currentDownload = null;
+        activeDownloads.delete(downloadId);
+        broadcastQueue();
+        pumpDownloads();
         return;
       }
       send('download-error', `yt-dlp exited with code ${code}. Tip: Tools → Update yt-dlp if this keeps happening.`);
       currentDownload = null;
+      activeDownloads.delete(downloadId);
+      broadcastQueue();
+      pumpDownloads();
       return;
     }
     const now = new Date().toISOString();
@@ -1048,5 +1131,8 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
     });
     broadcastToExtensions({ type: 'complete', count: completed.length });
     currentDownload = null;
+    activeDownloads.delete(downloadId);
+    broadcastQueue();
+    pumpDownloads();
   });
-});
+}

@@ -51,6 +51,22 @@
     return Array.from(found);
   }
 
+  function pageThumbnail() {
+    // Try og:image first, then twitter:image, then <video poster>, then YouTube thumbnail
+    const og = document.querySelector('meta[property="og:image"]');
+    if (og && og.content) return og.content;
+    const tw = document.querySelector('meta[name="twitter:image"]');
+    if (tw && tw.content) return tw.content;
+    const poster = document.querySelector('video[poster]');
+    if (poster && poster.poster) return poster.poster;
+    // YouTube: extract video ID from URL
+    const ytMatch = location.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+    if (ytMatch) return `https://i.ytimg.com/vi/${ytMatch[1]}/hqdefault.jpg`;
+    const ytShort = location.href.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+    if (ytShort) return `https://i.ytimg.com/vi/${ytShort[1]}/hqdefault.jpg`;
+    return null;
+  }
+
   let lastReport = 0;
   function reportNow() {
     const urls = scanMedia();
@@ -58,6 +74,7 @@
       type: 'page-media',
       pageUrl: location.href,
       pageTitle: document.title,
+      thumbnail: pageThumbnail(),
       supportedVideoPage: isSupportedVideoPage(),
       urls,
     });

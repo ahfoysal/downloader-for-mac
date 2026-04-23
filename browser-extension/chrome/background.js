@@ -76,6 +76,30 @@ function sendToApp(url) {
 // Open persistent connection at startup
 connectNative();
 
+// ===== Download interception =====
+const MEDIA_EXT_RE = /\.(mp4|mkv|webm|mov|m4a|mp3|flac|wav|ogg|ts|m3u8|mpd|avi|flv|aac)(\?.*)?$/i;
+chrome.downloads && chrome.downloads.onCreated.addListener(async (item) => {
+  const on = await getSetting('interceptDownloads', false);
+  if (!on) return;
+  if (!item.url) return;
+  // Heuristic: intercept if it looks like media or came from a supported site
+  const isMedia = MEDIA_EXT_RE.test(item.url) || MEDIA_EXT_RE.test(item.filename || '') ||
+                  (item.mime && /^(video|audio)\//i.test(item.mime));
+  const isSupportedHost = /(youtube|youtu\.be|vimeo|tiktok|twitter|x\.com|soundcloud|twitch|dailymotion|bilibili)/i.test(item.url);
+  if (!isMedia && !isSupportedHost) return;
+  try { chrome.downloads.cancel(item.id); } catch (_) {}
+  try { chrome.downloads.erase({ id: item.id }); } catch (_) {}
+  sendToApp(item.referrer || item.url);
+  try {
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon-128.png',
+      title: 'Intercepted download',
+      message: 'Sending to Downloader for Mac instead of browser download.',
+    });
+  } catch (_) {}
+});
+
 // Context menu on page / link / video
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
@@ -154,6 +178,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       urls: msg.urls || [],
       pageUrl: msg.pageUrl,
       pageTitle: msg.pageTitle,
+      thumbnail: msg.thumbnail || null,
       supported: !!msg.supportedVideoPage,
     };
     setBadge(tabId, msg.urls.length, msg.supportedVideoPage);
