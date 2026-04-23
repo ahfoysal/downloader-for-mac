@@ -28,6 +28,9 @@ function setView(name) {
   state.view = name;
   qsa('.nav-tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   qsa('.view').forEach((v) => v.classList.toggle('active', v.dataset.view === name));
+  document.body.classList.toggle('view-browse', name === 'browse');
+  document.body.classList.toggle('view-library', name === 'library');
+  document.body.classList.toggle('view-download', name === 'download');
   if (name === 'library') renderLibrary();
   if (name === 'browse') initBrowse();
 }

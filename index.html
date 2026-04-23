@@ -724,7 +724,7 @@
 
     /* Floating Action Button (FAB) — VidMate style */
     .browse-fab {
-      position: absolute;
+      position: fixed;
       bottom: 24px;
       left: 50%;
       transform: translateX(-50%) translateY(80px);
@@ -742,10 +742,15 @@
       align-items: center;
       gap: 10px;
       box-shadow: 0 10px 30px rgba(94, 234, 212, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
-      transition: transform 0.3s var(--ease), opacity 0.25s var(--ease), box-shadow 0.2s var(--ease);
-      z-index: 20;
+      transition: transform 0.3s var(--ease), opacity 0.25s var(--ease), box-shadow 0.2s var(--ease), bottom 0.25s var(--ease);
+      z-index: 150;
       white-space: nowrap;
     }
+    /* When mini player is visible, lift the FAB above it */
+    body.mini-active .browse-fab { bottom: 88px; }
+    body.mini-active .browse-fab.show { transform: translateX(-50%) translateY(0); }
+    /* FAB only on Browse tab */
+    body:not(.view-browse) .browse-fab { display: none; }
     .browse-fab.show {
       opacity: 1;
       pointer-events: auto;
