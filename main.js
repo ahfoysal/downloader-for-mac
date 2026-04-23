@@ -755,7 +755,7 @@ ipcMain.on('retry-item', async (event, { url, format, index, playlistFolder, sub
     ? path.join(selectedDownloadFolder, playlistFolder)
     : selectedDownloadFolder;
   const outputTemplate = path
-    .join(outDir, playlistFolder ? `${String(index).padStart(3, '0')} - %(title)s.${extension}` : `%(title)s.${extension}`)
+    .join(outDir, `%(title)s.${extension}`)
     .replace(/\\/g, '/');
 
   const args = [
@@ -876,10 +876,10 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
 
   const send = (channel, payload) => {
     if (event.sender.isDestroyed()) return;
-    const withId = (payload && typeof payload === 'object')
-      ? { ...payload, downloadId }
-      : { value: payload, downloadId };
-    event.sender.send(channel, withId);
+    // Only attach downloadId to plain objects; leave strings, arrays, primitives alone.
+    const isPlainObj = payload && typeof payload === 'object' && !Array.isArray(payload);
+    const out = isPlainObj ? { ...payload, downloadId } : payload;
+    event.sender.send(channel, out);
   };
 
   activeDownloads.set(downloadId, { proc: null, url, format, title: null, percent: 0, state: 'starting' });
@@ -933,9 +933,10 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
   const outputTemplate = path
     .join(
       selectedDownloadFolder,
-      playlist ? `%(playlist_title|Playlist)s/%(playlist_index)03d - %(title)s.${extension}` : `%(title)s.${extension}`
+      playlist ? `%(playlist_title|Playlist)s/%(title)s.${extension}` : `%(title)s.${extension}`
     )
     .replace(/\\/g, '/');
+  const archivePath = path.join(userData, 'download-archive.txt');
 
   // If a specific format_id was picked, override the preset's -f flag.
   const presetArgs = formatId
@@ -954,6 +955,7 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
     '--ffmpeg-location', ffmpegPath,
     '--embed-metadata',
     '--embed-thumbnail',
+    '--download-archive', archivePath,
   ];
 
   if (resume !== false) args.push('--continue');

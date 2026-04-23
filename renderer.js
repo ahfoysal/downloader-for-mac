@@ -720,16 +720,98 @@ function initBrowse() {
   }
   $('browseGo').addEventListener('click', navigate);
   urlBar.addEventListener('keydown', (e) => { if (e.key === 'Enter') navigate(); });
-  sendBtn.addEventListener('click', () => {
+  sendBtn.addEventListener('click', async () => {
     const u = sendBtn.dataset.url || webview.getURL();
     if (!u) return;
-    urlInput.value = u;
-    state.urlInput = u;
-    detectPlaylistUrl();
-    setView('download');
-    analyzeUrl(u);
+    openFabSheet(u);
   });
 }
+
+// ===== FAB quick-pick sheet =====
+async function openFabSheet(url) {
+  const backdrop = $('fabSheetBackdrop');
+  const thumb = $('fabSheetThumb');
+  const titleEl = $('fabSheetTitle');
+  const subEl = $('fabSheetSub');
+  const videoGrid = $('fabSheetVideo');
+  const audioGrid = $('fabSheetAudio');
+  titleEl.textContent = 'Analyzing…';
+  subEl.innerHTML = '<span class="fab-sheet-spinner"></span>Fetching formats';
+  thumb.src = '';
+  videoGrid.innerHTML = '<div class="fab-sheet-loading">Loading…</div>';
+  audioGrid.innerHTML = '';
+  backdrop.classList.add('show');
+
+  const res = await api.probeFormats(url);
+  if (!res.ok) {
+    titleEl.textContent = 'Could not analyze';
+    subEl.textContent = res.error || 'Unknown error';
+    videoGrid.innerHTML = '';
+    return;
+  }
+  thumb.src = res.thumbnail || '';
+  titleEl.textContent = res.title || 'Untitled';
+  const parts = [];
+  if (res.uploader) parts.push(res.uploader);
+  if (res.duration) parts.push(fmtDur(res.duration));
+  subEl.textContent = parts.join(' · ');
+
+  // Preset video qualities
+  const presets = [
+    { label: 'Best', sub: 'mp4', tile: 'video', fmt: 'best' },
+    { label: '1080p', sub: 'mp4', tile: 'video', fmt: '1080' },
+    { label: '720p',  sub: 'mp4', tile: 'video', fmt: '720' },
+    { label: '480p',  sub: 'mp4', tile: 'video', fmt: '480' },
+  ];
+  videoGrid.innerHTML = presets.map((p) =>
+    `<button class="fab-sheet-chip" data-tile="${p.tile}" data-fmt="${p.fmt}"><span class="chip-label">${p.label}</span><span class="chip-size">${p.sub}</span></button>`
+  ).join('');
+
+  const audioPresets = [
+    { label: 'MP3', sub: 'converted', tile: 'audio', fmt: 'mp3' },
+    { label: 'M4A', sub: 'native AAC', tile: 'audio', fmt: 'm4a' },
+    { label: 'WebM', sub: 'original', tile: 'audio', fmt: 'webm' },
+  ];
+  audioGrid.innerHTML = audioPresets.map((p) =>
+    `<button class="fab-sheet-chip" data-tile="${p.tile}" data-fmt="${p.fmt}"><span class="chip-label">${p.label}</span><span class="chip-size">${p.sub}</span></button>`
+  ).join('');
+
+  function pick(ev) {
+    const chip = ev.target.closest('.fab-sheet-chip');
+    if (!chip) return;
+    const format = chip.dataset.fmt;
+    state.analyzedUrl = url;
+    state.meta = res;
+    state.urlInput = url;
+    state.selectedTile = chip.dataset.tile;
+    state.selectedFormatId = null;
+    // Sync the tile selects so Download tab stays consistent
+    if (chip.dataset.tile === 'video') { $('videoQuality').value = format; $('tileVideo').classList.add('selected'); $('tileAudio').classList.remove('selected'); }
+    else { $('audioFormat').value = format; $('tileAudio').classList.add('selected'); $('tileVideo').classList.remove('selected'); }
+    closeFabSheet();
+    // Fire the download in-place (don't switch to Download tab; toast feedback only)
+    const opts = {
+      playlist: /[?&]list=|\/playlist\?|\/channel\//i.test(url),
+      subtitles: $('optSubs').checked,
+      cookiesBrowser: $('optCookies').value,
+      formatId: null,
+      resume: $('optResume').checked,
+    };
+    api.downloadAudio(url, format, opts);
+    toast(`Downloading ${format.toUpperCase()} — track in Download tab`, 'success');
+  }
+  videoGrid.addEventListener('click', pick, { once: true });
+  audioGrid.addEventListener('click', pick, { once: true });
+}
+function closeFabSheet() {
+  $('fabSheetBackdrop').classList.remove('show');
+}
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'fabSheetBackdrop' || e.target.closest('#fabSheetClose')) closeFabSheet();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('fabSheetBackdrop').classList.contains('show')) closeFabSheet();
+});
 
 // ============ Boot ============
 (async () => {
