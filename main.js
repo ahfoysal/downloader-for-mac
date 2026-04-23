@@ -287,11 +287,18 @@ app.whenReady().then(() => {
     console.error('Failed to set yt-dlp binary path:', err);
   }
   mainWindow = new BrowserWindow({
-    width: 960,
-    height: 740,
+    width: 980,
+    height: 760,
     minWidth: 820,
     minHeight: 600,
-    webPreferences: { preload: path.join(__dirname, 'preload.js') },
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#0a0a0c',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      webviewTag: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
   });
   mainWindow.loadFile('index.html');
   buildMenu(mainWindow);

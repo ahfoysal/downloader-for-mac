@@ -1,0 +1,752 @@
+// renderer.js — v2.0 mode-state UI
+'use strict';
+
+const api = window.electronAPI;
+const $ = (id) => document.getElementById(id);
+const qs = (sel, root = document) => root.querySelector(sel);
+const qsa = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+// ============ State ============
+const state = {
+  mode: 'idle',                  // idle | ready | downloading | done | error | queue
+  view: 'download',              // download | library | browse
+  urlInput: '',
+  analyzedUrl: null,
+  meta: null,                    // {title, uploader, duration, thumbnail, formats[]}
+  selectedFormatId: null,
+  selectedTile: 'audio',         // audio | video
+  lastDownloadedFile: null,
+  lastError: null,
+  queueState: { active: [], queued: [] },
+  playlistState: [],
+  settings: {},
+  history: [],
+};
+
+// ============ Mode controller ============
+function setView(name) {
+  state.view = name;
+  qsa('.nav-tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+  qsa('.view').forEach((v) => v.classList.toggle('active', v.dataset.view === name));
+  if (name === 'library') renderLibrary();
+  if (name === 'browse') initBrowse();
+}
+
+function setMode(name) {
+  state.mode = name;
+  // If queue has >1 active+queued, force queue mode (but allow user to switch)
+  const totalQueue = state.queueState.active.length + state.queueState.queued.length;
+  const effective = totalQueue > 1 && (name === 'downloading' || name === 'idle') ? 'queue' : name;
+  qsa('.mode').forEach((m) => m.classList.toggle('active', m.dataset.mode === effective));
+}
+
+// ============ URL input + auto-analyze ============
+const urlInput = $('urlInput');
+const urlWrap = $('urlWrap');
+const btnDownload = $('btnDownload');
+const tileVideo = $('tileVideo');
+const tileAudio = $('tileAudio');
+const videoQuality = $('videoQuality');
+const audioFormat = $('audioFormat');
+
+urlInput.addEventListener('input', () => {
+  state.urlInput = urlInput.value.trim();
+  btnDownload.disabled = !/^https?:\/\//i.test(state.urlInput);
+  detectPlaylistUrl();
+});
+urlInput.addEventListener('paste', () => {
+  setTimeout(() => {
+    const u = urlInput.value.trim();
+    if (/^https?:\/\//i.test(u)) {
+      state.urlInput = u;
+      detectPlaylistUrl();
+      analyzeUrl(u);
+    }
+  }, 10);
+});
+urlInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && state.urlInput) {
+    if (state.mode === 'idle') {
+      if (state.analyzedUrl === state.urlInput) openReady();
+      else analyzeUrl(state.urlInput);
+    }
+  }
+});
+
+function detectPlaylistUrl() {
+  const u = state.urlInput;
+  if (!/^https?:\/\//i.test(u)) return;
+  const looksLikePlaylist = /[?&]list=[^&]+/i.test(u) || /\/playlist\?/.test(u) || /\/channel\//.test(u);
+  if (looksLikePlaylist && !$('optPlaylist').checked) {
+    $('optPlaylist').checked = true;
+    toast('Playlist detected', 'info');
+  }
+}
+
+async function analyzeUrl(url) {
+  if (!url) return;
+  urlWrap.classList.add('loading');
+  const res = await api.probeFormats(url);
+  urlWrap.classList.remove('loading');
+  if (!res.ok) {
+    toast(res.error || 'Could not analyze URL', 'error');
+    return;
+  }
+  state.analyzedUrl = url;
+  state.meta = res;
+  prepReady(res);
+}
+
+// ============ Tiles (video/audio) ============
+[tileVideo, tileAudio].forEach((tile) => {
+  tile.addEventListener('click', (e) => {
+    if (e.target.tagName === 'SELECT') return;
+    state.selectedTile = tile.dataset.tile;
+    tileVideo.classList.toggle('selected', state.selectedTile === 'video');
+    tileAudio.classList.toggle('selected', state.selectedTile === 'audio');
+    api.updateSettings({ selectedTile: state.selectedTile });
+  });
+});
+videoQuality.addEventListener('change', () => api.updateSettings({ videoQuality: videoQuality.value }));
+audioFormat.addEventListener('change', () => api.updateSettings({ audioFormat: audioFormat.value }));
+
+function currentFormat() {
+  if (state.selectedTile === 'video') return videoQuality.value; // best/1080/720/480
+  return audioFormat.value; // mp3/m4a/webm
+}
+
+// ============ More-options drawer ============
+const moreToggle = $('moreToggle');
+const optionsDrawer = $('optionsDrawer');
+moreToggle.addEventListener('click', () => {
+  const isOpen = optionsDrawer.classList.toggle('open');
+  moreToggle.classList.toggle('open', isOpen);
+});
+const optClip = $('optClip');
+const clipInputs = $('clipInputs');
+optClip.addEventListener('change', () => clipInputs.classList.toggle('hidden', !optClip.checked));
+
+// ============ Ready mode ============
+function prepReady(meta) {
+  $('readyThumb').src = meta.thumbnail || '';
+  $('readyTitle').textContent = meta.title || 'Untitled';
+  const parts = [];
+  if (meta.uploader) parts.push(meta.uploader);
+  if (meta.duration) parts.push(fmtDur(meta.duration));
+  $('readyMeta').textContent = parts.join(' · ');
+  // Build quality chips
+  const grid = $('qualityGrid');
+  const videos = (meta.formats || []).filter((f) => f.vcodec).sort((a, b) => (b.height || 0) - (a.height || 0));
+  const audios = (meta.formats || []).filter((f) => !f.vcodec && f.acodec).sort((a, b) => (b.abr || 0) - (a.abr || 0));
+  const dedup = [];
+  const seen = new Set();
+  [...videos.slice(0, 6), ...audios.slice(0, 3)].forEach((f) => {
+    const key = f.height ? `v${f.height}${f.ext}` : `a${Math.round(f.abr || 0)}${f.ext}`;
+    if (!seen.has(key)) { seen.add(key); dedup.push(f); }
+  });
+  // Always prepend quick-presets: Best / 1080 / 720 / MP3
+  grid.innerHTML = `
+    <span class="quality-chip selected" data-preset="auto">Auto (${state.selectedTile})</span>
+    <span class="quality-chip" data-preset="best">Best MP4</span>
+    <span class="quality-chip" data-preset="1080">1080p</span>
+    <span class="quality-chip" data-preset="720">720p</span>
+    <span class="quality-chip" data-preset="mp3">MP3</span>
+  ` + dedup.map((f) =>
+    `<span class="quality-chip" data-format-id="${f.format_id}">${describeFormat(f)}</span>`
+  ).join('');
+  state.selectedFormatId = null;
+  grid.querySelectorAll('.quality-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      grid.querySelectorAll('.quality-chip').forEach((c) => c.classList.remove('selected'));
+      chip.classList.add('selected');
+      state.selectedFormatId = chip.dataset.formatId || null;
+      if (chip.dataset.preset === 'mp3') { state.selectedTile = 'audio'; audioFormat.value = 'mp3'; }
+      else if (chip.dataset.preset === 'best') { state.selectedTile = 'video'; videoQuality.value = 'best'; }
+      else if (chip.dataset.preset === '1080') { state.selectedTile = 'video'; videoQuality.value = '1080'; }
+      else if (chip.dataset.preset === '720') { state.selectedTile = 'video'; videoQuality.value = '720'; }
+    });
+  });
+  openReady();
+}
+
+function openReady() { setMode('ready'); }
+$('btnReadyCancel').addEventListener('click', () => setMode('idle'));
+
+$('btnReadyDownload').addEventListener('click', startDownload);
+btnDownload.addEventListener('click', () => {
+  if (!state.urlInput) return;
+  // Kick off analyze in background so thumbnail shows up in the dl card
+  if (state.analyzedUrl !== state.urlInput) analyzeUrl(state.urlInput);
+  startDownload();
+});
+
+async function startDownload() {
+  const url = state.urlInput;
+  if (!/^https?:\/\//i.test(url)) { toast('Paste a URL first', 'error'); return; }
+  // Dedup check
+  const dup = await api.checkDuplicate(url);
+  if (dup.duplicate) {
+    if (!confirm(`Already downloaded:\n${dup.filepath}\n\nDownload again?`)) return;
+  }
+  const format = currentFormat();
+  const opts = {
+    playlist: $('optPlaylist').checked,
+    subtitles: $('optSubs').checked,
+    cookiesBrowser: $('optCookies').value,
+    formatId: state.selectedFormatId,
+    startTime: optClip.checked ? $('clipStart').value.trim() || null : null,
+    endTime: optClip.checked ? $('clipEnd').value.trim() || null : null,
+    resume: $('optResume').checked,
+  };
+  // Reset UI to downloading state
+  state.playlistState = [];
+  $('playlistListWrap').innerHTML = '';
+  $('playlistListWrap').classList.add('hidden');
+  $('dlTitle').textContent = state.meta && state.meta.title ? state.meta.title : 'Starting…';
+  $('dlSub').textContent = 'Fetching video info…';
+  $('dlPercent').textContent = '0%';
+  $('dlSpeed').textContent = '—';
+  $('dlEta').textContent = '—';
+  $('dlBarWrap').classList.add('indeterminate');
+  $('dlBar').style.width = '0%';
+  const thumb = state.meta && state.meta.thumbnail;
+  if (thumb) {
+    $('dlThumb').src = thumb;
+    $('dlThumb').classList.remove('hidden');
+    $('dlThumbPlaceholder').classList.add('hidden');
+  } else {
+    $('dlThumb').classList.add('hidden');
+    $('dlThumbPlaceholder').classList.remove('hidden');
+  }
+  setMode('downloading');
+  api.downloadAudio(url, format, opts);
+}
+
+$('btnCancel').addEventListener('click', () => api.cancelDownload());
+
+// ============ Download events ============
+api.onMeta((meta) => {
+  if (state.mode === 'downloading') {
+    if (meta.title) $('dlTitle').textContent = meta.title;
+    if (meta.uploader) $('dlSub').textContent = meta.uploader;
+    if (meta.thumbnail) {
+      $('dlThumb').src = meta.thumbnail;
+      $('dlThumb').classList.remove('hidden');
+      $('dlThumbPlaceholder').classList.add('hidden');
+    }
+  }
+});
+api.onStatus((msg) => { if (state.mode === 'downloading') $('dlSub').textContent = msg; });
+api.onProgress((data) => {
+  if (state.mode !== 'downloading' && state.mode !== 'queue') return;
+  const pct = parseFloat(data.percent) || 0;
+  $('dlBarWrap').classList.remove('indeterminate');
+  $('dlBar').style.width = pct + '%';
+  $('dlPercent').textContent = pct.toFixed(1) + '%';
+  $('dlSpeed').textContent = data.speed || '—';
+  $('dlEta').textContent = data.eta ? 'ETA ' + data.eta : '—';
+  // Per-item mini-bar for playlists
+  if (data.item && data.item.index && data.item.index !== 'NA') {
+    const idx = parseInt(data.item.index, 10);
+    const it = state.playlistState.find((x) => x.index === idx);
+    if (it) { it.percent = pct; renderPlaylist(); }
+  }
+});
+api.onPlaylistItems((items) => {
+  state.playlistState = items.map((it) => ({ ...it, state: 'pending', percent: 0 }));
+  renderPlaylist();
+});
+api.onItemState((data) => {
+  const it = state.playlistState.find((x) => x.index === data.index);
+  if (!it) return;
+  it.state = data.state;
+  if (data.title) it.title = data.title;
+  if (data.filepath) it.filepath = data.filepath;
+  if (data.error) it.error = data.error;
+  if (data.state === 'downloading') { it.percent = 0; it.error = null; }
+  if (data.state === 'done') it.percent = 100;
+  renderPlaylist();
+});
+function renderPlaylist() {
+  const wrap = $('playlistListWrap');
+  if (state.playlistState.length === 0) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  const done = state.playlistState.filter((i) => i.state === 'done').length;
+  wrap.innerHTML = `
+    <div class="pl-list">
+      <div class="pl-head"><strong>Playlist</strong><span>${done}/${state.playlistState.length} done</span></div>
+      ${state.playlistState.map((it) => `
+        <div class="pl-item ${it.state}">
+          <span class="pl-idx">${String(it.index).padStart(3, '0')}</span>
+          <span class="pl-title" title="${(it.title||'').replace(/"/g,'&quot;')}">${(it.title||'').replace(/</g,'&lt;')}</span>
+          ${it.state === 'error' && it.url ? `<button class="pl-retry" data-retry="${it.index}">Retry</button>` : ''}
+          <span class="pl-state">${it.state}</span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  wrap.querySelectorAll('[data-retry]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.retry);
+      const it = state.playlistState.find((x) => x.index === idx);
+      if (!it || !it.url) return;
+      api.retryItem({
+        url: it.url,
+        format: currentFormat(),
+        index: idx,
+        playlistFolder: state.meta && state.meta.title ? state.meta.title.replace(/[\\/:*?"<>|]/g, '_') : null,
+        subtitles: $('optSubs').checked,
+        cookiesBrowser: $('optCookies').value,
+      });
+    });
+  });
+}
+
+api.onComplete(async (payload) => {
+  state.lastDownloadedFile = payload && payload.filepath;
+  if (state.queueState.active.length + state.queueState.queued.length <= 1) {
+    setMode('done');
+    $('doneTitle').textContent = payload && payload.count > 1 ? `${payload.count} files downloaded` : 'Download complete';
+    $('doneSub').textContent = state.lastDownloadedFile || '';
+    const actions = $('doneActions');
+    actions.innerHTML = `
+      ${state.lastDownloadedFile ? `
+        <button class="btn btn-secondary btn-sm" data-done="show">Show</button>
+        <button class="btn btn-secondary btn-sm" data-done="copy">Copy path</button>
+      ` : ''}
+      <button class="btn btn-primary btn-sm" data-done="new">New download</button>
+    `;
+    actions.querySelectorAll('[data-done]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const a = b.dataset.done;
+        if (a === 'show' && state.lastDownloadedFile) api.revealFile(state.lastDownloadedFile);
+        else if (a === 'copy' && state.lastDownloadedFile) { navigator.clipboard.writeText(state.lastDownloadedFile); toast('Path copied', 'success'); }
+        else if (a === 'new') { urlInput.value = ''; state.urlInput = ''; state.analyzedUrl = null; state.meta = null; setMode('idle'); urlInput.focus(); }
+      });
+    });
+  }
+  if (payload && payload.history) state.history = payload.history;
+  if (state.view === 'library') renderLibrary();
+});
+api.onError((msg) => {
+  state.lastError = msg;
+  $('errorMsg').textContent = msg || 'Unknown error';
+  if (state.queueState.active.length + state.queueState.queued.length <= 1) setMode('error');
+});
+$('btnErrorDismiss').addEventListener('click', () => setMode('idle'));
+$('btnErrorRetry').addEventListener('click', () => { setMode('idle'); btnDownload.click(); });
+
+// ============ Queue panel ============
+api.onQueueState((data) => {
+  state.queueState = data;
+  renderQueue();
+  // Auto-switch to queue mode if >1 downloads
+  if (data.active.length + data.queued.length > 1 && state.view === 'download') setMode('queue');
+  else if (data.active.length + data.queued.length === 0 && state.mode === 'queue') setMode('idle');
+});
+function renderQueue() {
+  $('queueCount').textContent = `${state.queueState.active.length} active · ${state.queueState.queued.length} waiting`;
+  const rows = $('queueRows');
+  rows.innerHTML = [
+    ...state.queueState.active.map((d) => {
+      const pct = Math.round(d.percent || 0);
+      return `
+        <div class="q-row active" data-id="${d.id}">
+          <div class="q-row-body">
+            <div class="q-row-title">${(d.title || d.url || '').replace(/</g, '&lt;')}</div>
+            <div class="q-row-meta">
+              <span>${(d.format || '').toUpperCase()}</span>
+              <span>· ${pct}%</span>
+              ${d.speed ? `<span>· ${d.speed}</span>` : ''}
+              ${d.eta ? `<span>· ETA ${d.eta}</span>` : ''}
+            </div>
+            <div class="q-mini-bar"><div class="q-mini-bar-fill" style="width:${pct}%"></div></div>
+          </div>
+          <button class="q-cancel" data-cancel="${d.id}">×</button>
+        </div>`;
+    }),
+    ...state.queueState.queued.map((d) => `
+      <div class="q-row pending" data-id="${d.id}" draggable="true">
+        <span class="q-handle">⋮⋮</span>
+        <div class="q-row-body">
+          <div class="q-row-title">${(d.url || '').replace(/</g, '&lt;')}</div>
+          <div class="q-row-meta"><span>${(d.format || '').toUpperCase()}</span><span>· waiting</span></div>
+        </div>
+        <button class="q-cancel" data-cancel="${d.id}">×</button>
+      </div>`),
+  ].join('');
+  rows.querySelectorAll('[data-cancel]').forEach((b) => {
+    b.addEventListener('click', () => api.cancelDownloadById(b.dataset.cancel));
+  });
+  // Drag reorder
+  let dragSrc = null;
+  rows.querySelectorAll('.q-row.pending').forEach((el) => {
+    el.addEventListener('dragstart', () => { dragSrc = el; el.classList.add('dragging'); });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+      const ids = [...rows.querySelectorAll('.q-row.pending')].map((r) => r.dataset.id);
+      api.reorderQueue(ids);
+      dragSrc = null;
+    });
+  });
+  rows.addEventListener('dragover', (e) => {
+    const t = e.target.closest('.q-row.pending');
+    if (!t || !dragSrc || t === dragSrc) return;
+    e.preventDefault();
+    const r = t.getBoundingClientRect();
+    t.parentNode.insertBefore(dragSrc, e.clientY > r.top + r.height / 2 ? t.nextSibling : t);
+  });
+}
+
+// ============ Tabs ============
+qsa('.nav-tab').forEach((t) => t.addEventListener('click', () => setView(t.dataset.tab)));
+
+// ============ Library ============
+const librarySearch = $('librarySearch');
+librarySearch.addEventListener('input', renderLibrary);
+
+async function renderLibrary() {
+  const entries = await api.getHistory();
+  state.history = entries;
+  const q = librarySearch.value.trim().toLowerCase();
+  const enriched = await Promise.all(entries.map(async (e) => {
+    const [exists, pos] = await Promise.all([api.fileExists(e.filepath), api.getPlayPosition(e.filepath)]);
+    return { ...e, _exists: !!exists, _pos: pos };
+  }));
+  const filtered = q ? enriched.filter((e) =>
+    (e.title || '').toLowerCase().includes(q) ||
+    (e.uploader || '').toLowerCase().includes(q) ||
+    (e.format || '').toLowerCase().includes(q)
+  ) : enriched;
+  const onDisk = enriched.filter((e) => e._exists).length;
+  $('libraryStats').textContent = `${onDisk} of ${enriched.length} on disk${q ? ` · showing ${filtered.length}` : ''}`;
+  const container = $('libraryContainer');
+  if (filtered.length === 0) {
+    container.innerHTML = `<div class="lib-empty">
+      <svg class="ico ico-lg" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      <div>${entries.length === 0 ? 'No downloads yet.' : 'No matches.'}</div>
+    </div>`;
+    return;
+  }
+  container.innerHTML = `<div class="lib-grid">` + filtered.map((e) => {
+    const resume = e._pos && e._pos.duration ? Math.round((e._pos.pos / e._pos.duration) * 100) : 0;
+    const isAudio = ['mp3', 'm4a', 'webm'].includes(e.format);
+    const thumb = e.thumbnail
+      ? `<img class="lib-card-thumb" src="${e.thumbnail}" onerror="this.outerHTML='<div class=\\'lib-card-thumb-placeholder\\'>${isAudio ? '♪' : '▶'}</div>'" />`
+      : `<div class="lib-card-thumb-placeholder">${isAudio ? '♪' : '▶'}</div>`;
+    return `
+      <div class="lib-card ${e._exists ? '' : 'missing'}" data-path="${(e.filepath || '').replace(/"/g, '&quot;')}" data-title="${(e.title || '').replace(/"/g, '&quot;')}">
+        ${thumb}
+        ${resume > 0 && resume < 95 ? `<div class="lib-card-resume"><div class="lib-card-resume-fill" style="width:${resume}%"></div></div>` : ''}
+        <div class="lib-card-body">
+          <div class="lib-card-title">${(e.title || 'Untitled').replace(/</g, '&lt;')}</div>
+          <div class="lib-card-meta">${(e.format || '').toUpperCase()}${e.uploader ? ' · ' + e.uploader : ''}</div>
+        </div>
+      </div>
+    `;
+  }).join('') + `</div>`;
+  container.querySelectorAll('.lib-card').forEach((card) => {
+    card.addEventListener('click', () => {
+      const path = card.dataset.path;
+      if (!path || card.classList.contains('missing')) return;
+      playFile(path, card.dataset.title);
+    });
+    card.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (card.dataset.path) api.revealFile(card.dataset.path);
+    });
+  });
+}
+
+// ============ Player ============
+const player = $('player');
+const playerVideo = $('playerVideo');
+const playerTitle = $('playerTitle');
+let currentPlaying = null;
+
+async function playFile(filepath, title) {
+  currentPlaying = filepath;
+  playerTitle.textContent = title || filepath.split('/').pop();
+  playerVideo.src = 'file://' + filepath;
+  player.classList.add('show');
+  const saved = await api.getPlayPosition(filepath);
+  if (saved && saved.pos && saved.duration && (saved.pos / saved.duration) < 0.95) {
+    playerVideo.currentTime = saved.pos;
+  }
+  try { await playerVideo.play(); } catch (_) {}
+}
+let saveTimer = null;
+playerVideo.addEventListener('timeupdate', () => {
+  if (!currentPlaying || !playerVideo.duration) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    api.savePlayPosition(currentPlaying, playerVideo.currentTime, playerVideo.duration);
+  }, 1500);
+});
+$('playerClose').addEventListener('click', () => {
+  if (currentPlaying && playerVideo.duration) {
+    api.savePlayPosition(currentPlaying, playerVideo.currentTime, playerVideo.duration);
+  }
+  playerVideo.pause();
+  playerVideo.src = '';
+  player.classList.remove('show');
+  currentPlaying = null;
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && player.classList.contains('show')) $('playerClose').click();
+});
+
+// ============ Settings modal ============
+const settingsModal = $('settingsModal');
+$('btnSettings').addEventListener('click', openSettings);
+$('settingsClose').addEventListener('click', () => settingsModal.classList.remove('show'));
+settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) settingsModal.classList.remove('show'); });
+
+async function openSettings() {
+  const s = await api.getSettings();
+  state.settings = s;
+  $('setFolderDisplay').textContent = s.downloadFolder || '— not set —';
+  $('setConcurrency').value = s.concurrency || 1;
+  $('setSpeedLimit').value = s.speedLimit || '';
+  $('setOutputTemplate').value = s.outputTemplate || '';
+  $('setOrganize').checked = !!s.organizeByUploader;
+  $('setKeepAwake').checked = s.keepAwake !== false;
+  $('setAutoRetry').checked = s.autoRetryYtDlp !== false;
+  $('setWatchFolder').value = s.watchFolder || '';
+  settingsModal.classList.add('show');
+}
+[
+  ['setConcurrency', 'concurrency', (v) => parseInt(v) || 1],
+  ['setSpeedLimit', 'speedLimit', (v) => v.trim()],
+  ['setOutputTemplate', 'outputTemplate', (v) => v.trim()],
+  ['setOrganize', 'organizeByUploader', (e) => e.target.checked, true],
+  ['setKeepAwake', 'keepAwake', (e) => e.target.checked, true],
+  ['setAutoRetry', 'autoRetryYtDlp', (e) => e.target.checked, true],
+  ['setWatchFolder', 'watchFolder', (v) => v.trim()],
+].forEach(([id, key, conv, isCheckbox]) => {
+  $(id).addEventListener('change', async (e) => {
+    const v = isCheckbox ? conv(e) : conv(e.target.value);
+    await api.updateSettings({ [key]: v });
+  });
+});
+$('setFolderPick').addEventListener('click', async () => {
+  const dir = await api.selectDownloadFolder();
+  if (dir) $('setFolderDisplay').textContent = dir;
+});
+$('setWatchFolderPick').addEventListener('click', async () => {
+  const dir = await api.pickFolder('Watch folder');
+  if (dir) { $('setWatchFolder').value = dir; await api.updateSettings({ watchFolder: dir }); }
+});
+$('btnFolder').addEventListener('click', () => api.openFolder());
+
+// ============ Extension installer ============
+const installerModal = $('installerModal');
+$('btnExtension').addEventListener('click', openInstaller);
+$('installerClose').addEventListener('click', () => installerModal.classList.remove('show'));
+installerModal.addEventListener('click', (e) => { if (e.target === installerModal) installerModal.classList.remove('show'); });
+
+const BROWSER_META = {
+  chrome:  { name: 'Google Chrome',  auto: true },
+  brave:   { name: 'Brave',          auto: true },
+  edge:    { name: 'Microsoft Edge', auto: true },
+  arc:     { name: 'Arc',            auto: true },
+  vivaldi: { name: 'Vivaldi',        auto: true },
+  firefox: { name: 'Firefox',        auto: false },
+  safari:  { name: 'Safari',         auto: false, note: 'needs Xcode' },
+};
+async function openInstaller() {
+  const installed = await api.detectBrowsers();
+  const s = await api.getSettings();
+  const connected = s.extensionInstalled;
+  $('installerStatus').innerHTML = connected
+    ? `<span style="color:var(--success);">✓ Extension connected</span><br><span style="color:var(--text-muted);font-size:11px;">Last seen: ${s.extensionLastSeen ? new Date(s.extensionLastSeen).toLocaleString() : 'just now'}</span>`
+    : `<span style="color:var(--text-muted);">Extension not detected yet — install for any browser below.</span>`;
+  const list = $('installerList');
+  const all = ['chrome', 'brave', 'edge', 'arc', 'vivaldi', 'firefox', 'safari'];
+  list.innerHTML = all.map((b) => {
+    const meta = BROWSER_META[b];
+    const present = installed.includes(b);
+    return `
+      <div class="browser-row ${present ? '' : 'disabled'}">
+        <span class="b-name">${meta.name}</span>
+        <span class="b-sub">${present ? (meta.note || 'installed') : 'not found'}</span>
+        ${meta.auto && present ? `<button class="btn btn-primary btn-sm" data-auto="${b}">Auto</button>` : ''}
+        <button class="btn btn-secondary btn-sm" data-install="${b}" ${present ? '' : 'disabled'}>Open</button>
+      </div>
+    `;
+  }).join('');
+  list.addEventListener('click', async (ev) => {
+    const autoBtn = ev.target.closest('[data-auto]');
+    const openBtn = ev.target.closest('[data-install]');
+    if (autoBtn) {
+      const res = await api.launchWithExtension(autoBtn.dataset.auto);
+      if (res.ok) toast(`Launched ${BROWSER_META[autoBtn.dataset.auto].name} with extension`, 'success');
+      else toast(res.error || 'Failed', 'error');
+    } else if (openBtn) {
+      const res = await api.openExtensionInstaller(openBtn.dataset.install);
+      if (res.ok) toast(`Opened ${BROWSER_META[openBtn.dataset.install].name}`, 'success');
+      else toast(res.error || 'Failed', 'error');
+    }
+  });
+  installerModal.classList.add('show');
+}
+api.onExtensionPing(() => {
+  api.getSettings().then((s) => {
+    $('extDot').classList.toggle('connected', !!s.extensionInstalled);
+  });
+  toast('Browser extension connected', 'success');
+});
+
+// ============ Deep link + clipboard + watch folder ============
+api.onDeepLink((url) => {
+  urlInput.value = url;
+  state.urlInput = url;
+  detectPlaylistUrl();
+  setView('download');
+  analyzeUrl(url);
+  toast('URL received', 'info');
+});
+api.onWatchFolderUrls((urls) => {
+  toast(`${urls.length} URLs queued from watch folder`, 'success');
+  setView('download');
+  urls.forEach((u, i) => setTimeout(() => {
+    urlInput.value = u;
+    state.urlInput = u;
+    startDownload();
+  }, i * 200));
+});
+api.onScheduledTrigger((task) => {
+  toast(`Running scheduled: ${task.url.slice(0, 40)}…`, 'info');
+  api.downloadAudio(task.url, task.format, task.opts || {});
+});
+
+let lastClip = '';
+window.addEventListener('focus', () => {
+  const clip = (api.readClipboard() || '').trim();
+  if (!clip || clip === lastClip) return;
+  if (!/^https?:\/\//i.test(clip)) return;
+  if (!/youtube|youtu\.be|vimeo|twitter|x\.com|tiktok|soundcloud|twitch|instagram/i.test(clip)) return;
+  if (clip === state.urlInput) return;
+  lastClip = clip;
+  const t = toast('URL in clipboard — click to use', 'info', () => {
+    urlInput.value = clip;
+    state.urlInput = clip;
+    analyzeUrl(clip);
+  });
+});
+
+// ============ Toasts ============
+function toast(msg, kind = 'info', onClick) {
+  const el = document.createElement('div');
+  el.className = `toast ${kind}`;
+  el.textContent = msg;
+  if (onClick) { el.style.cursor = 'pointer'; el.addEventListener('click', () => { onClick(); el.remove(); }); }
+  $('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+  return el;
+}
+
+// ============ Keyboard shortcuts ============
+document.addEventListener('keydown', (e) => {
+  const meta = e.metaKey || e.ctrlKey;
+  if (!meta) return;
+  if (e.key === ',') { e.preventDefault(); openSettings(); }
+  else if (e.key === '1') { e.preventDefault(); setView('download'); }
+  else if (e.key === '2') { e.preventDefault(); setView('library'); }
+  else if (e.key === '3') { e.preventDefault(); setView('browse'); }
+  else if (e.key === 'k' && !e.shiftKey) { e.preventDefault(); urlInput.value = ''; state.urlInput = ''; urlInput.focus(); }
+});
+
+// ============ Helpers ============
+function fmtDur(s) {
+  if (!s) return '';
+  s = Math.round(s);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+}
+function fmtBytes(b) {
+  if (!b) return '';
+  const u = ['B', 'KB', 'MB', 'GB'];
+  let i = 0; let v = b;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(v < 10 ? 1 : 0)} ${u[i]}`;
+}
+function describeFormat(f) {
+  const parts = [];
+  if (f.height) parts.push(`${f.height}p${f.fps && f.fps > 30 ? f.fps : ''}`);
+  else if (f.acodec) parts.push(`audio ${Math.round(f.abr || f.tbr || 0)}k`);
+  parts.push(f.ext);
+  if (f.filesize) parts.push(fmtBytes(f.filesize));
+  return parts.join(' · ');
+}
+
+// ============ Browse tab (built-in browser with webview) ============
+const SUPPORTED_SITES_RE = /(youtube\.com|youtu\.be|vimeo\.com|twitter\.com|x\.com|tiktok\.com|soundcloud\.com|twitch\.tv|dailymotion\.com|bilibili\.com|facebook\.com|instagram\.com)/i;
+function initBrowse() {
+  const webview = $('browseView');
+  const urlBar = $('browseUrl');
+  const sendBtn = $('browseSend');
+  if (webview.dataset.init) return;
+  webview.dataset.init = '1';
+
+  function updateSendBtn(url) {
+    if (SUPPORTED_SITES_RE.test(url || '')) {
+      sendBtn.classList.remove('hidden');
+      sendBtn.dataset.url = url;
+    } else {
+      sendBtn.classList.add('hidden');
+    }
+  }
+  webview.addEventListener('did-navigate', (e) => { urlBar.value = e.url; updateSendBtn(e.url); });
+  webview.addEventListener('did-navigate-in-page', (e) => { urlBar.value = e.url; updateSendBtn(e.url); });
+  webview.addEventListener('page-title-updated', () => { /* optional: show in status */ });
+  webview.addEventListener('did-fail-load', (e) => {
+    if (e.errorCode && e.errorCode !== -3) toast(`Load failed: ${e.errorDescription}`, 'error');
+  });
+
+  $('browseBack').addEventListener('click', () => { if (webview.canGoBack()) webview.goBack(); });
+  $('browseForward').addEventListener('click', () => { if (webview.canGoForward()) webview.goForward(); });
+  $('browseReload').addEventListener('click', () => webview.reload());
+  function navigate() {
+    let u = urlBar.value.trim();
+    if (!u) return;
+    if (!/^https?:\/\//i.test(u) && !/^about:/.test(u)) {
+      if (/^[\w-]+(\.[\w-]+)+/.test(u)) u = 'https://' + u;
+      else u = 'https://www.google.com/search?q=' + encodeURIComponent(u);
+    }
+    webview.loadURL(u);
+  }
+  $('browseGo').addEventListener('click', navigate);
+  urlBar.addEventListener('keydown', (e) => { if (e.key === 'Enter') navigate(); });
+  sendBtn.addEventListener('click', () => {
+    const u = sendBtn.dataset.url || webview.getURL();
+    if (!u) return;
+    urlInput.value = u;
+    state.urlInput = u;
+    detectPlaylistUrl();
+    setView('download');
+    analyzeUrl(u);
+  });
+}
+
+// ============ Boot ============
+(async () => {
+  const s = await api.getSettings();
+  state.settings = s;
+  if (s.audioFormat) audioFormat.value = s.audioFormat;
+  if (s.videoQuality) videoQuality.value = s.videoQuality;
+  if (s.selectedTile) {
+    state.selectedTile = s.selectedTile;
+    tileVideo.classList.toggle('selected', state.selectedTile === 'video');
+    tileAudio.classList.toggle('selected', state.selectedTile === 'audio');
+  }
+  $('extDot').classList.toggle('connected', !!s.extensionInstalled);
+  // Initial queue state
+  const q = await api.getQueueState();
+  state.queueState = q;
+  if (q.active.length + q.queued.length > 1) setMode('queue');
+  renderQueue();
+  urlInput.focus();
+})();
