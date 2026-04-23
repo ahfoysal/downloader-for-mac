@@ -1,57 +1,89 @@
 #!/usr/bin/env node
 // Native Messaging Host for Downloader for Mac.
-// Chrome/Firefox invoke this binary with stdio connected. Protocol:
-//  - Each message is prefixed by a 4-byte little-endian length
-//  - Followed by UTF-8 JSON of that length
-// We read messages, act on them (open the downloader:// deep link),
-// and respond with a JSON ack.
+//
+// Wire shape:
+//   Extension  <-- stdio (length-prefixed JSON) -->  Host  <-- Unix socket (newline JSON) -->  App
+//
+// The host is basically a bidirectional proxy. Chrome starts one host process
+// per `chrome.runtime.connectNative` call and kills it when the port closes.
 
+const net = require('net');
+const os = require('os');
+const path = require('path');
 const { spawn } = require('child_process');
 
-let buf = Buffer.alloc(0);
+const SOCK_PATH = path.join(os.homedir(), 'Library', 'Application Support', 'Downloader for Mac', 'control.sock');
 
-process.stdin.on('data', (chunk) => {
-  buf = Buffer.concat([buf, chunk]);
-  while (buf.length >= 4) {
-    const len = buf.readUInt32LE(0);
-    if (buf.length < 4 + len) break;
-    const json = buf.slice(4, 4 + len).toString('utf8');
-    buf = buf.slice(4 + len);
-    try {
-      const msg = JSON.parse(json);
-      handle(msg).then((reply) => send(reply)).catch((err) => send({ ok: false, error: err.message }));
-    } catch (err) {
-      send({ ok: false, error: 'bad json: ' + err.message });
-    }
-  }
-});
+let sock = null;
+let sockBuf = '';
+let stdinBuf = Buffer.alloc(0);
 
-process.stdin.on('end', () => process.exit(0));
-
-function send(obj) {
+// ===== Stdio half (host <-> Chrome extension) =====
+function sendToExt(obj) {
   const data = Buffer.from(JSON.stringify(obj), 'utf8');
   const hdr = Buffer.alloc(4);
   hdr.writeUInt32LE(data.length, 0);
   process.stdout.write(Buffer.concat([hdr, data]));
 }
 
-async function handle(msg) {
-  if (!msg || typeof msg !== 'object') return { ok: false, error: 'no message' };
-  if (msg.type === 'ping') return { ok: true, pong: true, version: '1.0.0' };
-  if (msg.type === 'send' && msg.url) {
-    openApp(msg.url);
-    return { ok: true, received: msg.url };
+process.stdin.on('data', (chunk) => {
+  stdinBuf = Buffer.concat([stdinBuf, chunk]);
+  while (stdinBuf.length >= 4) {
+    const len = stdinBuf.readUInt32LE(0);
+    if (stdinBuf.length < 4 + len) break;
+    const json = stdinBuf.slice(4, 4 + len).toString('utf8');
+    stdinBuf = stdinBuf.slice(4 + len);
+    let msg;
+    try { msg = JSON.parse(json); } catch (_) { continue; }
+    handleExtMessage(msg);
   }
-  if (msg.type === 'send-many' && Array.isArray(msg.urls)) {
-    msg.urls.forEach((u, i) => setTimeout(() => openApp(u), i * 400));
-    return { ok: true, count: msg.urls.length };
-  }
-  return { ok: false, error: 'unknown type ' + msg.type };
+});
+process.stdin.on('end', () => {
+  try { if (sock) sock.end(); } catch (_) {}
+  process.exit(0);
+});
+
+// ===== Socket half (host <-> App) =====
+function connectSock() {
+  sock = net.createConnection(SOCK_PATH);
+  sock.on('connect', () => {
+    sendToExt({ type: 'hello', connected: true });
+  });
+  sock.on('data', (buf) => {
+    sockBuf += buf.toString('utf8');
+    let idx;
+    while ((idx = sockBuf.indexOf('\n')) !== -1) {
+      const line = sockBuf.slice(0, idx);
+      sockBuf = sockBuf.slice(idx + 1);
+      if (!line.trim()) continue;
+      try { sendToExt(JSON.parse(line)); } catch (_) {}
+    }
+  });
+  sock.on('error', () => { sock = null; });
+  sock.on('close', () => { sock = null; });
 }
 
-function openApp(url) {
-  const deep = 'downloader://url/' + encodeURIComponent(url);
-  // `open` on macOS dispatches to the registered protocol handler without
-  // flashing a tab or window in the calling browser.
-  spawn('open', [deep], { detached: true, stdio: 'ignore' }).unref();
+function sendToApp(obj) {
+  const payload = JSON.stringify(obj) + '\n';
+  if (!sock) {
+    // Fallback: open deep link via `open` if socket is down
+    if (obj && obj.type === 'send' && obj.url) {
+      const deep = 'downloader://url/' + encodeURIComponent(obj.url);
+      spawn('open', [deep], { detached: true, stdio: 'ignore' }).unref();
+      sendToExt({ type: 'ack', via: 'fallback-deeplink', url: obj.url });
+    }
+    return;
+  }
+  try { sock.write(payload); } catch (_) {}
 }
+
+function handleExtMessage(msg) {
+  if (!msg || typeof msg !== 'object') return;
+  if (msg.type === 'ping') {
+    sendToExt({ type: 'pong', ok: true, version: '1.1.0', socketUp: !!sock });
+    return;
+  }
+  sendToApp(msg);
+}
+
+connectSock();

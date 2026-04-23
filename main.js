@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Menu, powerSaveBlocker } = r
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const net = require('net');
 const YtDlpWrap = require('yt-dlp-wrap').default;
 
 const ytDlpWrap = new YtDlpWrap();
@@ -295,6 +296,7 @@ app.whenReady().then(() => {
 
   startWatchFolder();
   startScheduler();
+  startControlSocket();
 
   // Auto-install native host on first launch (idempotent, silent).
   if (!appSettings.nativeHostInstalled) {
@@ -307,6 +309,57 @@ app.whenReady().then(() => {
     }
   }
 });
+
+// ===== Control socket: lets native-host proxies talk to us =====
+const controlClients = new Set();
+function startControlSocket() {
+  const sockDir = app.getPath('userData');
+  const sockPath = path.join(sockDir, 'control.sock');
+  try { if (fs.existsSync(sockPath)) fs.unlinkSync(sockPath); } catch (_) {}
+
+  const server = net.createServer((conn) => {
+    controlClients.add(conn);
+    conn.setEncoding('utf8');
+    let buf = '';
+    conn.on('data', (chunk) => {
+      buf += chunk;
+      let idx;
+      while ((idx = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 1);
+        if (!line) continue;
+        try { handleControlMessage(conn, JSON.parse(line)); } catch (_) {}
+      }
+    });
+    conn.on('close', () => controlClients.delete(conn));
+    conn.on('error', () => controlClients.delete(conn));
+    // Greet
+    try { conn.write(JSON.stringify({ type: 'welcome', app: 'downloader-for-mac' }) + '\n'); } catch (_) {}
+  });
+
+  server.on('error', (err) => console.error('control socket error:', err));
+  server.listen(sockPath, () => console.log('control socket listening at', sockPath));
+}
+
+function handleControlMessage(conn, msg) {
+  if (!msg || !msg.type) return;
+  if (msg.type === 'send' && msg.url) {
+    if (mainWindow) {
+      mainWindow.webContents.send('deep-link-url', msg.url);
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+    try { conn.write(JSON.stringify({ type: 'ack', url: msg.url }) + '\n'); } catch (_) {}
+  }
+}
+
+// Broadcast to every connected native-host
+function broadcastToExtensions(obj) {
+  const line = JSON.stringify(obj) + '\n';
+  for (const c of controlClients) {
+    try { c.write(line); } catch (_) {}
+  }
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -818,6 +871,7 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
       size: progress.totalSize || '',
       item: currentItem,
     });
+    broadcastToExtensions({ type: 'progress', percent: parseFloat(pct) || 0, eta: progress.eta || '' });
   });
 
   let lastStartedIndex = null;
@@ -913,6 +967,7 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
       count: completed.length,
       history: entries,
     });
+    broadcastToExtensions({ type: 'complete', count: completed.length });
     currentDownload = null;
   });
 });

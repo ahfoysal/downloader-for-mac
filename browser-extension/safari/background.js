@@ -4,22 +4,43 @@
 
 const NATIVE_HOST = 'com.ahfoysal.downloader_for_mac';
 const DEEP_LINK_PREFIX = 'downloader://url/';
-let nativeAvailable = null;   // null=unknown, true/false once probed
+let nativePort = null;
 
-function probeNative() {
-  return new Promise((resolve) => {
+function connectNative() {
+  try {
+    nativePort = chrome.runtime.connectNative(NATIVE_HOST);
+    nativePort.onMessage.addListener(handleAppMessage);
+    nativePort.onDisconnect.addListener(() => {
+      nativePort = null;
+      setTimeout(connectNative, 5000);
+    });
+  } catch (_) {
+    nativePort = null;
+    setTimeout(connectNative, 10000);
+  }
+}
+
+function handleAppMessage(msg) {
+  if (!msg || !msg.type) return;
+  if (msg.type === 'progress') {
+    const pct = Math.round(msg.percent || 0);
+    chrome.action.setBadgeText({ text: pct > 0 ? `${pct}%` : '' });
+    chrome.action.setBadgeBackgroundColor({ color: '#03dac6' });
+    chrome.action.setTitle({ title: `Downloading ${pct}% · ETA ${msg.eta || '?'}` });
+  } else if (msg.type === 'complete') {
+    chrome.action.setBadgeText({ text: '✓' });
+    chrome.action.setBadgeBackgroundColor({ color: '#4ade80' });
+    chrome.action.setTitle({ title: 'Download complete' });
+    setTimeout(() => { chrome.action.setBadgeText({ text: '' }); chrome.action.setTitle({ title: 'Send to Downloader for Mac' }); }, 5000);
     try {
-      chrome.runtime.sendNativeMessage(NATIVE_HOST, { type: 'ping' }, (response) => {
-        if (chrome.runtime.lastError || !response) {
-          nativeAvailable = false;
-          resolve(false);
-        } else {
-          nativeAvailable = !!response.pong;
-          resolve(nativeAvailable);
-        }
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon-128.png',
+        title: 'Download complete',
+        message: msg.count > 1 ? `${msg.count} files saved` : 'File saved',
       });
-    } catch (_) { nativeAvailable = false; resolve(false); }
-  });
+    } catch (_) {}
+  }
 }
 
 function fallbackOpenDeepLink(url) {
@@ -29,19 +50,16 @@ function fallbackOpenDeepLink(url) {
   });
 }
 
-async function sendToApp(url) {
+function sendToApp(url) {
   if (!url) return;
-  // Try native first (silent, no tab). Fall back to deep link tab trick.
-  if (nativeAvailable === null) await probeNative();
-  if (nativeAvailable) {
+  if (nativePort) {
     try {
-      chrome.runtime.sendNativeMessage(NATIVE_HOST, { type: 'send', url }, (res) => {
-        if (chrome.runtime.lastError) {
-          nativeAvailable = false;
-          fallbackOpenDeepLink(url);
-        }
-      });
-    } catch (_) { fallbackOpenDeepLink(url); }
+      nativePort.postMessage({ type: 'send', url });
+    } catch (_) {
+      nativePort = null;
+      fallbackOpenDeepLink(url);
+      connectNative();
+    }
   } else {
     fallbackOpenDeepLink(url);
   }
@@ -55,8 +73,8 @@ async function sendToApp(url) {
   } catch (_) {}
 }
 
-// Probe once at startup
-probeNative();
+// Open persistent connection at startup
+connectNative();
 
 // Context menu on page / link / video
 chrome.runtime.onInstalled.addListener(() => {
