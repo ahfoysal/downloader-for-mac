@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Downloader for Mac</title>
+  <style>
+    :root {
+      --bg: #0e0e10;
+      --panel: #17171b;
+      --panel-2: #1e1e23;
+      --border: #2a2a31;
+      --text: #e8e8ea;
+      --muted: #9a9aa3;
+      --accent: #03dac6;
+    }
+    body {
+      margin: 0;
+      padding: 14px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      width: 300px;
+    }
+    h1 {
+      font-size: 14px;
+      margin: 0 0 4px;
+      font-weight: 700;
+    }
+    .sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .url {
+      font-size: 11px;
+      color: var(--muted);
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      padding: 6px 8px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      margin-bottom: 8px;
+      outline: none;
+    }
+    input:focus { border-color: var(--accent); }
+    button {
+      width: 100%;
+      background: var(--accent);
+      color: #000;
+      border: none;
+      padding: 9px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      margin-top: 6px;
+    }
+    .ok {
+      color: var(--accent);
+      font-size: 11px;
+      margin-top: 8px;
+      text-align: center;
+      min-height: 14px;
+    }
+    .hint {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 12px;
+      line-height: 1.4;
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+    }
+    kbd {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Downloader for Mac</h1>
+  <div class="sub">Send the current page or a pasted URL.</div>
+  <div class="url" id="currentUrl">Loading…</div>
+  <button id="sendCurrent">Send current tab</button>
+  <input id="manualUrl" type="text" placeholder="…or paste any URL" spellcheck="false" />
+  <button class="secondary" id="sendManual">Send pasted URL</button>
+  <div class="ok" id="status"></div>
+  <div class="hint">
+    Shortcut: <kbd>⌘⇧D</kbd> sends current tab from anywhere.<br>
+    Right-click pages, links, or videos for more options.
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

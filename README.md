@@ -101,6 +101,15 @@ This tool is for **personal and educational use only** — downloading your own 
 
 Downloading copyrighted YouTube content without permission may violate YouTube's Terms of Service and copyright law in your jurisdiction. **You are responsible for what you download.** The author does not condone piracy and is not liable for misuse.
 
+## Browser extensions (dev)
+
+Chrome / Firefox / Safari extensions that send URLs to this app with one click are in [`browser-extension/`](./browser-extension/README.md). Current install is dev-mode only (load unpacked). Features:
+
+- Toolbar popup with "Send current tab"
+- Right-click context menu on pages, links, or `<video>` elements
+- Keyboard shortcut: ⌘⇧D
+- Uses the `downloader://` deep link — no network, no native host
+
 ## Credits
 
 This project is a macOS fork of [Refloow/YouTube-Music-Download](https://github.com/Refloow/YouTube-Music-Download), which provides the original Electron scaffold (Windows-targeted). All downloading is done by [yt-dlp](https://github.com/yt-dlp/yt-dlp) and all audio conversion by [FFmpeg](https://ffmpeg.org/).

@@ -1128,7 +1128,7 @@
       });
     }
 
-    downloadBtn.addEventListener('click', () => {
+    downloadBtn.addEventListener('click', async () => {
       if (downloading) {
         window.electronAPI.cancelDownload();
         return;
@@ -1141,6 +1141,11 @@
       }
       const urls = raw.split(/\s+/).map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s));
       if (urls.length === 0) { urlInput.focus(); return; }
+      // Dedup check for single-URL downloads
+      if (urls.length === 1) {
+        const ok = await maybeConfirmDuplicate(urls[0]);
+        if (!ok) return;
+      }
       const opts = {
         playlist: playlistToggle.checked,
         subtitles: subsToggle.checked,
@@ -1241,11 +1246,27 @@
       statusMeta.textContent = parts.join('  •  ');
     });
 
+    let lastDownloadedFile = null;
     window.electronAPI.onComplete(async (payload) => {
       setDownloading(false);
       progressBarWrap.classList.remove('indeterminate');
       statusTitle.textContent = statusTitle.textContent.replace(/^\s*/, '');
-      statusSub.textContent = urlQueue.length > 0 ? `Download complete — ${urlQueue.length} more queued` : 'Download complete';
+      const filepath = payload && payload.filepath;
+      lastDownloadedFile = filepath;
+      const actionsHtml = filepath
+        ? `<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+             <button class="retry-btn" id="actShow" style="color:var(--accent);">Show in Finder</button>
+             <button class="retry-btn" id="actOpen" style="color:var(--accent);">Open</button>
+             <button class="retry-btn" id="actCopy" style="color:var(--accent);">Copy path</button>
+           </div>`
+        : '';
+      statusSub.innerHTML = (urlQueue.length > 0 ? `Download complete — ${urlQueue.length} more queued` : 'Download complete') + actionsHtml;
+      if (filepath) {
+        const show = $('actShow'); const open = $('actOpen'); const copy = $('actCopy');
+        show && show.addEventListener('click', () => window.electronAPI.revealFile(filepath));
+        open && open.addEventListener('click', () => window.electronAPI.revealFile(filepath));
+        copy && copy.addEventListener('click', () => { navigator.clipboard.writeText(filepath); toast('Path copied', 'success'); });
+      }
       setPill('done', 'success');
       progressBar.style.width = '100%';
       if (payload && payload.history) renderHistory(payload.history);
