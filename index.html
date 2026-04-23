@@ -441,6 +441,146 @@
       font-weight: 500;
     }
 
+    /* Tab nav */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0;
+      align-items: center;
+    }
+    .tab {
+      background: transparent;
+      color: var(--muted);
+      border: none;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      border-radius: 0;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      width: auto;
+    }
+    .tab:hover { color: var(--text); background: transparent; }
+    .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+    .tab-content.hidden { display: none; }
+
+    /* Library view */
+    .lib-item {
+      display: flex;
+      gap: 12px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: background 0.1s, border-color 0.1s;
+      align-items: center;
+    }
+    .lib-item:hover { background: var(--panel); border-color: rgba(3,218,198,0.25); }
+    .lib-thumb {
+      width: 100px;
+      height: 60px;
+      border-radius: 6px;
+      object-fit: cover;
+      background: var(--panel-2);
+      flex-shrink: 0;
+    }
+    .lib-thumb-placeholder {
+      width: 100px;
+      height: 60px;
+      border-radius: 6px;
+      background: var(--panel-2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      flex-shrink: 0;
+      color: var(--muted);
+    }
+    .lib-body { flex: 1; min-width: 0; }
+    .lib-title {
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lib-meta {
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .lib-progress {
+      height: 3px;
+      background: var(--panel-2);
+      border-radius: 2px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+    .lib-progress-fill {
+      height: 100%;
+      background: var(--accent);
+    }
+    .lib-actions {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .lib-actions button {
+      padding: 6px 10px;
+      font-size: 11px;
+      width: auto;
+    }
+    .lib-missing { opacity: 0.5; }
+    .lib-missing .lib-title::after {
+      content: ' (missing)';
+      color: var(--danger);
+      font-size: 11px;
+    }
+
+    /* Inline player */
+    .player-card {
+      display: none;
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      right: 340px;
+      max-width: 640px;
+      margin: 0 auto;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+      z-index: 300;
+      overflow: hidden;
+    }
+    .player-card.show { display: block; }
+    .app.no-sidebar .player-card { right: 20px; }
+    .player-head {
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel-2);
+    }
+    .player-title {
+      font-size: 12px;
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+      padding-right: 10px;
+    }
+    .player-body { background: #000; }
+    .player-body video, .player-body audio { width: 100%; display: block; max-height: 360px; }
+
     /* Extension install banner */
     .ext-banner {
       background: linear-gradient(90deg, rgba(3,218,198,0.08), rgba(3,218,198,0.02));
@@ -782,9 +922,15 @@
 
   <div class="app no-sidebar" id="appRoot">
     <div class="main">
-      <h1>Downloader for Mac
+      <div class="tabs">
+        <button class="tab active" data-tab="download">Download</button>
+        <button class="tab" data-tab="library">Library</button>
+        <div style="flex:1"></div>
         <button class="icon-btn" id="settingsBtn" title="Settings (⌘,)">⚙︎</button>
-      </h1>
+      </div>
+
+      <div class="tab-content" data-pane="download">
+      <h1 style="margin-top:8px;">Downloader for Mac</h1>
       <div class="subtitle">Audio &amp; video from YouTube, Vimeo, Twitter/X, TikTok, SoundCloud, Twitch, and 1800+ more sites.</div>
 
       <div class="ext-banner" id="extBanner">
@@ -894,6 +1040,26 @@
           <span class="count" id="playlistCount">0 items</span>
         </div>
         <div class="playlist-items" id="playlistItems"></div>
+      </div>
+      </div><!-- /download pane -->
+
+      <div class="tab-content hidden" data-pane="library">
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;">
+          <h1 style="margin:0;flex:1;">Library</h1>
+          <input id="librarySearch" type="text" placeholder="Search library…" spellcheck="false" style="width:260px;padding:8px 12px;font-size:12px;" />
+        </div>
+        <div id="libraryStats" style="font-size:12px;color:var(--muted);margin-bottom:14px;"></div>
+        <div id="libraryList"></div>
+      </div><!-- /library pane -->
+
+      <div class="player-card" id="playerCard">
+        <div class="player-head">
+          <div class="player-title" id="playerTitle">Now playing</div>
+          <button class="icon-btn" id="playerClose" title="Close player">×</button>
+        </div>
+        <div class="player-body">
+          <video id="playerVideo" controls preload="metadata"></video>
+        </div>
       </div>
     </div>
 
@@ -1818,6 +1984,162 @@
         e.preventDefault();
         toggleSidebar();
       }
+    });
+
+    // ===== Tabs =====
+    const tabs = document.querySelectorAll('.tab');
+    const panes = document.querySelectorAll('.tab-content');
+    function switchTab(name) {
+      tabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+      panes.forEach((p) => p.classList.toggle('hidden', p.dataset.pane !== name));
+      if (name === 'library') renderLibrary();
+    }
+    tabs.forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+    document.addEventListener('keydown', (e) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === '1') { e.preventDefault(); switchTab('download'); }
+      else if (e.key === '2') { e.preventDefault(); switchTab('library'); }
+    });
+
+    // ===== Library view =====
+    const librarySearch = $('librarySearch');
+    const libraryList = $('libraryList');
+    const libraryStats = $('libraryStats');
+    const playerCard = $('playerCard');
+    const playerVideo = $('playerVideo');
+    const playerTitle = $('playerTitle');
+    const playerClose = $('playerClose');
+    let currentlyPlaying = null;
+
+    function fmtFileDate(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      return d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    async function renderLibrary() {
+      const entries = await window.electronAPI.getHistory();
+      const q = librarySearch.value.trim().toLowerCase();
+      // Annotate with file-exists and playback position
+      const enriched = await Promise.all(entries.map(async (e) => {
+        const [exists, pos] = await Promise.all([
+          window.electronAPI.fileExists(e.filepath),
+          window.electronAPI.getPlayPosition(e.filepath),
+        ]);
+        return { ...e, _exists: !!exists, _pos: pos };
+      }));
+      const filtered = q
+        ? enriched.filter((e) =>
+            (e.title || '').toLowerCase().includes(q) ||
+            (e.uploader || '').toLowerCase().includes(q) ||
+            (e.format || '').toLowerCase().includes(q) ||
+            (e.filepath || '').toLowerCase().includes(q)
+          )
+        : enriched;
+
+      const totalMB = 0; // could stat files if needed
+      const existingCount = enriched.filter((e) => e._exists).length;
+      libraryStats.textContent = `${existingCount} of ${enriched.length} items on disk${q ? ` · showing ${filtered.length}` : ''}`;
+
+      if (filtered.length === 0) {
+        libraryList.innerHTML = `<div style="text-align:center;color:var(--muted);padding:40px;">No downloads yet. Head to the Download tab to get started.</div>`;
+        return;
+      }
+
+      libraryList.innerHTML = filtered.map((e) => {
+        const resume = e._pos && e._pos.duration ? Math.round((e._pos.pos / e._pos.duration) * 100) : 0;
+        const thumb = e.thumbnail
+          ? `<img class="lib-thumb" src="${e.thumbnail}" onerror="this.style.display='none'" />`
+          : `<div class="lib-thumb-placeholder">${e.format === 'mp3' || e.format === 'm4a' || e.format === 'webm' ? '♪' : '▶︎'}</div>`;
+        return `
+          <div class="lib-item ${e._exists ? '' : 'lib-missing'}" data-path="${(e.filepath || '').replace(/"/g, '&quot;')}" data-id="${e.id}">
+            ${thumb}
+            <div class="lib-body">
+              <div class="lib-title">${(e.title || 'Untitled').replace(/</g, '&lt;')}</div>
+              <div class="lib-meta">
+                <span>${(e.format || '').toUpperCase()}</span>
+                ${e.uploader ? `<span>· ${e.uploader.replace(/</g, '&lt;')}</span>` : ''}
+                <span>· ${fmtFileDate(e.timestamp)}</span>
+              </div>
+              ${resume > 0 && resume < 95 ? `<div class="lib-progress"><div class="lib-progress-fill" style="width:${resume}%"></div></div>` : ''}
+            </div>
+            <div class="lib-actions">
+              ${e._exists ? `<button data-action="play">${resume > 0 && resume < 95 ? 'Resume' : 'Play'}</button>` : ''}
+              ${e._exists ? `<button class="secondary" data-action="reveal">Show</button>` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    libraryList.addEventListener('click', async (ev) => {
+      const item = ev.target.closest('.lib-item');
+      if (!item) return;
+      const action = ev.target.closest('[data-action]');
+      if (action && action.dataset.action === 'reveal') {
+        window.electronAPI.revealFile(item.dataset.path);
+        return;
+      }
+      if ((action && action.dataset.action === 'play') || (!action && item.dataset.path && !item.classList.contains('lib-missing'))) {
+        playFile(item.dataset.path, item.querySelector('.lib-title').textContent);
+      }
+    });
+
+    librarySearch.addEventListener('input', renderLibrary);
+
+    async function playFile(filepath, title) {
+      if (!filepath) return;
+      currentlyPlaying = filepath;
+      playerTitle.textContent = title || filepath.split('/').pop();
+      playerVideo.src = 'file://' + filepath;
+      playerCard.classList.add('show');
+      const saved = await window.electronAPI.getPlayPosition(filepath);
+      if (saved && saved.pos && saved.duration && (saved.pos / saved.duration) < 0.95) {
+        playerVideo.currentTime = saved.pos;
+      }
+      try { await playerVideo.play(); } catch (_) {}
+    }
+
+    let saveTimer = null;
+    playerVideo.addEventListener('timeupdate', () => {
+      if (!currentlyPlaying || !playerVideo.duration) return;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        window.electronAPI.savePlayPosition(currentlyPlaying, playerVideo.currentTime, playerVideo.duration);
+      }, 1500);
+    });
+    playerClose.addEventListener('click', () => {
+      if (currentlyPlaying && playerVideo.duration) {
+        window.electronAPI.savePlayPosition(currentlyPlaying, playerVideo.currentTime, playerVideo.duration);
+      }
+      playerVideo.pause();
+      playerVideo.src = '';
+      playerCard.classList.remove('show');
+      currentlyPlaying = null;
+    });
+
+    // ===== Per-site default format =====
+    // When URL changes, check if a site default exists and silently apply it.
+    async function applySiteDefault() {
+      const u = urlInput.value.trim();
+      if (!/^https?:\/\//i.test(u)) return;
+      const fmt = await window.electronAPI.getSiteDefault(u);
+      if (fmt && fmt !== formatSelect.value) {
+        formatSelect.value = fmt;
+        updateSubsState();
+      }
+    }
+    urlInput.addEventListener('blur', applySiteDefault);
+    window.electronAPI.onDeepLink && window.electronAPI.onDeepLink(() => setTimeout(applySiteDefault, 100));
+
+    // Save current format as site default: right-click on format select
+    formatSelect.addEventListener('contextmenu', async (e) => {
+      e.preventDefault();
+      const u = urlInput.value.trim();
+      if (!/^https?:\/\//i.test(u)) { toast('Paste a URL first', 'error'); return; }
+      const res = await window.electronAPI.setSiteDefault(u, formatSelect.value);
+      if (res.ok) toast(`${formatSelect.value.toUpperCase()} set as default for ${res.host}`, 'success');
     });
   </script>
 </body>

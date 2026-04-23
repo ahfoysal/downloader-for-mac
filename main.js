@@ -79,9 +79,12 @@ let appSettings = {
   keepAwake: true,
   watchFolder: '',
   scheduled: [],
-  extensionInstalled: false,      // set once a ping arrives from any browser extension
-  extensionLastSeen: null,         // ISO timestamp of last ping
-  extensionBanner: 'show',         // 'show' | 'dismissed'
+  extensionInstalled: false,
+  extensionLastSeen: null,
+  extensionBanner: 'show',
+  siteDefaults: {},               // { 'youtube.com': 'mp3', 'twitter.com': 'best', ... }
+  autoRetryYtDlp: true,           // auto-update yt-dlp and retry on signature failure
+  playPositions: {},              // { [filepath]: { pos: seconds, duration: seconds } }
 };
 let powerBlockerId = null;
 
@@ -569,6 +572,54 @@ ipcMain.handle('check-duplicate', (_e, url) => {
   return match ? { duplicate: true, filepath: match.filepath, timestamp: match.timestamp } : { duplicate: false };
 });
 
+// Per-site defaults — { host: format }
+function hostFromUrl(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch (_) { return ''; }
+}
+ipcMain.handle('get-site-default', (_e, url) => {
+  const host = hostFromUrl(url);
+  return appSettings.siteDefaults[host] || null;
+});
+ipcMain.handle('set-site-default', (_e, { url, format }) => {
+  const host = hostFromUrl(url);
+  if (!host) return { ok: false };
+  appSettings.siteDefaults[host] = format;
+  saveSettings();
+  return { ok: true, host, format };
+});
+
+// Play position tracker for continue-watching
+ipcMain.handle('save-play-position', (_e, { filepath, pos, duration }) => {
+  if (!filepath) return { ok: false };
+  appSettings.playPositions[filepath] = { pos, duration, ts: Date.now() };
+  // Keep only last 200 entries
+  const entries = Object.entries(appSettings.playPositions).sort((a,b) => b[1].ts - a[1].ts);
+  appSettings.playPositions = Object.fromEntries(entries.slice(0, 200));
+  saveSettings();
+  return { ok: true };
+});
+ipcMain.handle('get-play-position', (_e, filepath) => {
+  return appSettings.playPositions[filepath] || null;
+});
+
+// Check that a history-item file still exists on disk
+ipcMain.handle('file-exists', (_e, filepath) => {
+  try { return !!filepath && fs.existsSync(filepath); } catch (_) { return false; }
+});
+
+// Compute SHA256 of a completed file for duplicate-content detection.
+const crypto = require('crypto');
+ipcMain.handle('file-hash', async (_e, filepath) => {
+  return new Promise((resolve) => {
+    if (!filepath || !fs.existsSync(filepath)) return resolve(null);
+    const h = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filepath);
+    stream.on('data', (c) => h.update(c));
+    stream.on('end', () => resolve(h.digest('hex')));
+    stream.on('error', () => resolve(null));
+  });
+});
+
 ipcMain.handle('probe-formats', async (_e, url) => {
   if (!url) return { ok: false, error: 'no url' };
   try {
@@ -861,6 +912,11 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
   const completed = [];
   let currentItem = null;
   const startedAt = Date.now();
+  let capturedStderr = '';
+  let retrying = false;
+  if (currentDownload.ytDlpProcess && currentDownload.ytDlpProcess.stderr) {
+    currentDownload.ytDlpProcess.stderr.on('data', (b) => { capturedStderr += b.toString(); });
+  }
 
   currentDownload.on('progress', (progress) => {
     const pct = typeof progress.percent === 'number' ? progress.percent.toFixed(1) : progress.percent;
@@ -940,6 +996,29 @@ ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, c
       powerBlockerId = null;
     }
     if (code && code !== 0 && completed.length === 0) {
+      // Detect yt-dlp signature breakage heuristically — retry once after auto-update
+      const errText = (capturedStderr || '').toString();
+      const signatureBreak = /signature|nsig|player|extract|cipher/i.test(errText);
+      if (signatureBreak && appSettings.autoRetryYtDlp && !retrying) {
+        send('download-status', 'yt-dlp extractor failed — updating and retrying…');
+        const url2 = process.platform === 'win32'
+          ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'
+          : 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos';
+        (async () => {
+          try {
+            await downloadFile(url2, ytDlpOverridePath);
+            fs.chmodSync(ytDlpOverridePath, 0o755);
+            ytDlpWrap.setBinaryPath(ytDlpOverridePath);
+            retrying = true;
+            // Kick off same download again (reuse the closure args)
+            ipcMain.emit('download-audio', { sender: event.sender, _retry: true }, { url, format, playlist, subtitles, cookiesBrowser, formatId, startTime, endTime, resume });
+          } catch (_) {
+            send('download-error', `yt-dlp exited with code ${code}. Auto-update failed; try Tools → Update yt-dlp manually.`);
+          }
+        })();
+        currentDownload = null;
+        return;
+      }
       send('download-error', `yt-dlp exited with code ${code}. Tip: Tools → Update yt-dlp if this keeps happening.`);
       currentDownload = null;
       return;
