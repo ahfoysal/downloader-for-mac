@@ -1,7 +1,8 @@
 // main.js
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 const YtDlpWrap = require('yt-dlp-wrap').default;
 
 const ytDlpWrap = new YtDlpWrap();
@@ -13,23 +14,28 @@ const settingsPath = path.join(userData, 'settings.json');
 const historyPath = path.join(userData, 'history.json');
 
 const EXE = process.platform === 'win32' ? '.exe' : '';
+// User-writable yt-dlp override (so we can auto-update inside a signed bundle)
+const ytDlpOverridePath = path.join(userData, `yt-dlp${EXE}`);
+const ytDlpBundledPath = app.isPackaged
+  ? path.join(process.resourcesPath, `yt-dlp${EXE}`)
+  : path.join(__dirname, 'bin', `yt-dlp${EXE}`);
+function activeYtDlpPath() {
+  return fs.existsSync(ytDlpOverridePath) ? ytDlpOverridePath : ytDlpBundledPath;
+}
 const ffmpegPath = app.isPackaged
   ? path.join(process.resourcesPath, `ffmpeg${EXE}`)
   : path.join(__dirname, 'bin', `ffmpeg${EXE}`);
 
-function createWindow() {
-  const win = new BrowserWindow({
-    width: 900,
-    height: 680,
-    minWidth: 780,
-    minHeight: 560,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-    },
-  });
-
-  win.loadFile('index.html');
-}
+// Format presets — keep main.js as source of truth, expose to renderer.
+const FORMAT_PRESETS = {
+  mp3:   { kind: 'audio', ext: 'mp3',  args: ['-f', 'bestaudio', '-x', '--audio-format', 'mp3'] },
+  m4a:   { kind: 'audio', ext: 'm4a',  args: ['-f', 'bestaudio', '-x', '--audio-format', 'm4a'] },
+  webm:  { kind: 'audio', ext: 'webm', args: ['-f', 'bestaudio'] },
+  best:  { kind: 'video', ext: 'mp4',  args: ['-f', 'bv*+ba/b', '--merge-output-format', 'mp4'] },
+  '1080':{ kind: 'video', ext: 'mp4',  args: ['-f', 'bv*[height<=1080]+ba/b[height<=1080]', '--merge-output-format', 'mp4'] },
+  '720': { kind: 'video', ext: 'mp4',  args: ['-f', 'bv*[height<=720]+ba/b[height<=720]', '--merge-output-format', 'mp4'] },
+  '480': { kind: 'video', ext: 'mp4',  args: ['-f', 'bv*[height<=480]+ba/b[height<=480]', '--merge-output-format', 'mp4'] },
+};
 
 function loadJSON(p, fallback) {
   try {
@@ -48,13 +54,17 @@ function saveJSON(p, data) {
   }
 }
 
+let appSettings = { downloadFolder: null, subtitles: false, cookiesBrowser: 'none' };
+
 function loadSettings() {
   const s = loadJSON(settingsPath, {});
-  selectedDownloadFolder = s.downloadFolder || null;
+  appSettings = { ...appSettings, ...s };
+  selectedDownloadFolder = appSettings.downloadFolder || null;
 }
 
 function saveSettings() {
-  saveJSON(settingsPath, { downloadFolder: selectedDownloadFolder });
+  appSettings.downloadFolder = selectedDownloadFolder;
+  saveJSON(settingsPath, appSettings);
 }
 
 function loadHistory() {
@@ -72,17 +82,62 @@ function addHistoryEntry(entry) {
   return entries;
 }
 
+function buildMenu(win) {
+  const template = [
+    { role: 'appMenu' },
+    { role: 'editMenu' },
+    {
+      label: 'Tools',
+      submenu: [
+        {
+          label: 'Update yt-dlp…',
+          click: () => win.webContents.send('trigger-update-ytdlp'),
+        },
+        {
+          label: 'Reveal yt-dlp binary',
+          click: () => shell.showItemInFolder(activeYtDlpPath()),
+        },
+        { type: 'separator' },
+        {
+          label: 'Reset to bundled yt-dlp',
+          click: () => {
+            try { if (fs.existsSync(ytDlpOverridePath)) fs.unlinkSync(ytDlpOverridePath); } catch (_) {}
+            ytDlpWrap.setBinaryPath(activeYtDlpPath());
+            win.webContents.send('notify', 'Reverted to bundled yt-dlp.');
+          },
+        },
+      ],
+    },
+    { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        {
+          label: 'GitHub Repo',
+          click: () => shell.openExternal('https://github.com/ahfoysal/downloader-for-mac'),
+        },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 app.whenReady().then(() => {
   loadSettings();
   try {
-    const binaryPath = app.isPackaged
-      ? path.join(process.resourcesPath, `yt-dlp${EXE}`)
-      : path.join(__dirname, 'bin', `yt-dlp${EXE}`);
-    ytDlpWrap.setBinaryPath(binaryPath);
+    ytDlpWrap.setBinaryPath(activeYtDlpPath());
   } catch (err) {
     console.error('Failed to set yt-dlp binary path:', err);
   }
-  createWindow();
+  const win = new BrowserWindow({
+    width: 900,
+    height: 720,
+    minWidth: 780,
+    minHeight: 560,
+    webPreferences: { preload: path.join(__dirname, 'preload.js') },
+  });
+  win.loadFile('index.html');
+  buildMenu(win);
 });
 
 app.on('window-all-closed', () => {
@@ -104,6 +159,57 @@ ipcMain.handle('select-download-folder', async () => {
 
 ipcMain.handle('get-saved-folder', () => selectedDownloadFolder);
 ipcMain.handle('get-history', () => loadHistory());
+ipcMain.handle('get-settings', () => ({ ...appSettings }));
+ipcMain.handle('update-settings', (_e, patch) => {
+  appSettings = { ...appSettings, ...patch };
+  saveSettings();
+  return { ...appSettings };
+});
+
+ipcMain.handle('update-ytdlp', async (event) => {
+  const send = (ch, p) => {
+    if (!event.sender.isDestroyed()) event.sender.send(ch, p);
+  };
+  const url = process.platform === 'win32'
+    ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'
+    : 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos';
+  send('ytdlp-update-status', { state: 'downloading', message: 'Downloading latest yt-dlp…' });
+  try {
+    await downloadFile(url, ytDlpOverridePath);
+    fs.chmodSync(ytDlpOverridePath, 0o755);
+    ytDlpWrap.setBinaryPath(ytDlpOverridePath);
+    const version = await ytDlpWrap.execPromise(['--version']).catch(() => 'unknown');
+    send('ytdlp-update-status', { state: 'done', message: `Updated — version ${String(version).trim()}` });
+    return { ok: true, version: String(version).trim() };
+  } catch (err) {
+    send('ytdlp-update-status', { state: 'error', message: err.message });
+    return { ok: false, error: err.message };
+  }
+});
+
+function downloadFile(url, dest, redirectsLeft = 5) {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    https.get(url, (res) => {
+      if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location && redirectsLeft > 0) {
+        file.close();
+        fs.unlink(dest, () => {});
+        return downloadFile(res.headers.location, dest, redirectsLeft - 1).then(resolve, reject);
+      }
+      if (res.statusCode !== 200) {
+        file.close();
+        fs.unlink(dest, () => {});
+        return reject(new Error(`HTTP ${res.statusCode}`));
+      }
+      res.pipe(file);
+      file.on('finish', () => file.close(resolve));
+    }).on('error', (err) => {
+      file.close();
+      fs.unlink(dest, () => {});
+      reject(err);
+    });
+  });
+}
 
 ipcMain.handle('clear-history', () => {
   saveHistory([]);
@@ -136,6 +242,70 @@ ipcMain.handle('open-folder', () => {
   return false;
 });
 
+ipcMain.on('retry-item', async (event, { url, format, index, playlistFolder, subtitles, cookiesBrowser }) => {
+  if (!selectedDownloadFolder || !url) return;
+  const preset = FORMAT_PRESETS[format] || FORMAT_PRESETS.mp3;
+  const send = (channel, payload) => {
+    if (!event.sender.isDestroyed()) event.sender.send(channel, payload);
+  };
+  send('item-state', { index, state: 'downloading' });
+
+  const extension = preset.ext;
+  const outDir = playlistFolder
+    ? path.join(selectedDownloadFolder, playlistFolder)
+    : selectedDownloadFolder;
+  const outputTemplate = path
+    .join(outDir, playlistFolder ? `${String(index).padStart(3, '0')} - %(title)s.${extension}` : `%(title)s.${extension}`)
+    .replace(/\\/g, '/');
+
+  const args = [
+    url,
+    ...preset.args,
+    '-o', outputTemplate,
+    '--no-playlist',
+    '--newline',
+    '--progress',
+    '--restrict-filenames',
+    '--print', 'after_move:filepath=%(filepath)s',
+    '--ffmpeg-location', ffmpegPath,
+    '--embed-metadata',
+    '--embed-thumbnail',
+  ];
+  if (subtitles && preset.kind === 'video') {
+    args.push('--write-subs', '--write-auto-subs', '--sub-langs', 'en.*,en', '--embed-subs', '--convert-subs', 'srt');
+  }
+  if (cookiesBrowser && cookiesBrowser !== 'none') {
+    args.push('--cookies-from-browser', cookiesBrowser);
+  }
+
+  const dl = ytDlpWrap.exec(args);
+  let filepath = null;
+  dl.on('ytDlpEvent', (type, data) => {
+    const text = String(data).trim();
+    if (text.startsWith('filepath=')) filepath = text.slice('filepath='.length);
+  });
+  dl.on('error', (err) => {
+    send('item-state', { index, state: 'error', error: err && err.message ? err.message : String(err) });
+  });
+  dl.on('close', (code) => {
+    if (code === 0 && filepath) {
+      send('item-state', { index, state: 'done', filepath });
+      const entries = addHistoryEntry({
+        url,
+        format,
+        title: path.basename(filepath),
+        filepath,
+        folder: outDir,
+        timestamp: new Date().toISOString(),
+        playlist: playlistFolder || null,
+      });
+      send('history-updated', entries);
+    } else {
+      send('item-state', { index, state: 'error', error: `Retry failed (code ${code})` });
+    }
+  });
+});
+
 ipcMain.on('cancel-download', () => {
   if (currentDownload && !currentDownload.killed) {
     try {
@@ -146,10 +316,11 @@ ipcMain.on('cancel-download', () => {
   }
 });
 
-ipcMain.on('download-audio', async (event, { url, format, playlist }) => {
+ipcMain.on('download-audio', async (event, { url, format, playlist, subtitles, cookiesBrowser }) => {
   if (!selectedDownloadFolder) {
     return event.sender.send('download-error', 'No folder selected. Please select a download folder first.');
   }
+  const preset = FORMAT_PRESETS[format] || FORMAT_PRESETS.mp3;
 
   const send = (channel, payload) => {
     if (!event.sender.isDestroyed()) event.sender.send(channel, payload);
@@ -178,6 +349,7 @@ ipcMain.on('download-audio', async (event, { url, format, playlist }) => {
       playlistItems = info.entries.map((e, i) => ({
         index: i + 1,
         title: e.title || e.url || `Item ${i + 1}`,
+        url: e.url || (e.id ? `https://www.youtube.com/watch?v=${e.id}` : null),
         state: 'pending',
       }));
       send('playlist-items', playlistItems);
@@ -186,17 +358,17 @@ ipcMain.on('download-audio', async (event, { url, format, playlist }) => {
     console.error('info fetch failed:', err);
   }
 
-  const extension = format === 'mp3' ? 'mp3' : 'webm';
+  const extension = preset.ext;
   const outputTemplate = path
     .join(
       selectedDownloadFolder,
-      playlist ? '%(playlist_title|Playlist)s/%(playlist_index)03d - %(title)s.' + extension : `%(title)s.${extension}`
+      playlist ? `%(playlist_title|Playlist)s/%(playlist_index)03d - %(title)s.${extension}` : `%(title)s.${extension}`
     )
     .replace(/\\/g, '/');
 
   const args = [
     url,
-    '-f', 'bestaudio',
+    ...preset.args,
     '-o', outputTemplate,
     '--newline',
     '--progress',
@@ -204,10 +376,18 @@ ipcMain.on('download-audio', async (event, { url, format, playlist }) => {
     '--print', 'after_move:filepath=%(filepath)s',
     '--print', 'before_dl:item=%(playlist_index)s/%(playlist_count)s|%(title)s',
     '--ffmpeg-location', ffmpegPath,
+    '--embed-metadata',
+    '--embed-thumbnail',
   ];
 
+  if (subtitles && preset.kind === 'video') {
+    args.push('--write-subs', '--write-auto-subs', '--sub-langs', 'en.*,en', '--embed-subs', '--convert-subs', 'srt');
+  }
+  if (cookiesBrowser && cookiesBrowser !== 'none') {
+    args.push('--cookies-from-browser', cookiesBrowser);
+  }
   if (!playlist) args.push('--no-playlist');
-  if (format === 'mp3') args.push('-x', '--audio-format', 'mp3');
+  if (playlist) args.push('--ignore-errors');
 
   currentDownload = ytDlpWrap.exec(args);
   const completed = [];
@@ -225,13 +405,18 @@ ipcMain.on('download-audio', async (event, { url, format, playlist }) => {
     });
   });
 
+  let lastStartedIndex = null;
+  let lastCompletedIndex = null;
+
   currentDownload.on('ytDlpEvent', (type, data) => {
     const text = String(data).trim();
     if (text.startsWith('filepath=')) {
       const fp = text.slice('filepath='.length);
       completed.push(fp);
       if (currentItem && currentItem.index) {
-        send('item-state', { index: parseInt(currentItem.index, 10), state: 'done', filepath: fp });
+        const idx = parseInt(currentItem.index, 10);
+        lastCompletedIndex = idx;
+        send('item-state', { index: idx, state: 'done', filepath: fp });
       }
       return;
     }
@@ -239,15 +424,33 @@ ipcMain.on('download-audio', async (event, { url, format, playlist }) => {
       const raw = text.slice('item='.length);
       const [idx, title] = raw.split('|');
       const [cur, total] = (idx || '').split('/');
+      if (lastStartedIndex != null && lastStartedIndex !== lastCompletedIndex) {
+        send('item-state', { index: lastStartedIndex, state: 'error', error: 'Item failed or unavailable' });
+      }
       currentItem = { index: cur, total, title: title || '' };
       send('download-item', currentItem);
       if (cur && cur !== 'NA') {
-        send('item-state', { index: parseInt(cur, 10), state: 'downloading', title });
+        const n = parseInt(cur, 10);
+        lastStartedIndex = n;
+        send('item-state', { index: n, state: 'downloading', title });
       }
       return;
     }
     if (type === 'download') {
       send('download-status', text.slice(0, 160));
+    }
+  });
+
+  currentDownload.on('ytDlpEvent', (type, data) => {
+    if (type !== 'error') return;
+    const text = String(data).trim();
+    const m = text.match(/\[youtube\]\s+([\w-]+):/);
+    if (m && currentItem && currentItem.index) {
+      send('item-state', {
+        index: parseInt(currentItem.index, 10),
+        state: 'error',
+        error: text.slice(0, 200),
+      });
     }
   });
 
@@ -259,6 +462,9 @@ ipcMain.on('download-audio', async (event, { url, format, playlist }) => {
 
   currentDownload.on('close', (code) => {
     const durationMs = Date.now() - startedAt;
+    if (lastStartedIndex != null && lastStartedIndex !== lastCompletedIndex) {
+      send('item-state', { index: lastStartedIndex, state: 'error', error: 'Item failed or unavailable' });
+    }
     if (code && code !== 0 && completed.length === 0) {
       send('download-error', `yt-dlp exited with code ${code}`);
       currentDownload = null;

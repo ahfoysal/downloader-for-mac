@@ -164,6 +164,45 @@
       width: 0%;
       transition: width 0.25s ease-out;
     }
+    .progress-bar.indeterminate {
+      position: relative;
+      overflow: hidden;
+    }
+    .progress-bar.indeterminate .progress-fill {
+      width: 40% !important;
+      background: linear-gradient(90deg, transparent 0%, var(--accent) 30%, var(--accent-2) 70%, transparent 100%);
+      animation: indet 1.4s ease-in-out infinite;
+    }
+    @keyframes indet {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+    .spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: -2px;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .pulse-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      margin-right: 6px;
+      animation: pulse 1.2s ease-in-out infinite;
+      vertical-align: 1px;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.7); }
+    }
     .status-meta {
       display: flex;
       gap: 14px;
@@ -192,6 +231,64 @@
     }
     .pill.success { color: var(--success); border-color: rgba(74, 222, 128, 0.3); }
     .pill.error { color: var(--danger); border-color: rgba(255, 92, 108, 0.3); }
+
+    .opt-row {
+      display: flex;
+      gap: 18px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+      align-items: center;
+      font-size: 13px;
+    }
+    .opt {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+    .opt input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+      accent-color: var(--accent);
+    }
+    .opt-sublabel {
+      font-size: 12px;
+    }
+    .opt-select {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      width: auto;
+      margin: 0;
+    }
+    .opt.disabled { opacity: 0.4; pointer-events: none; }
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      z-index: 1000;
+      opacity: 0;
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(-4px);
+    }
+    .toast.error { border-color: rgba(255,92,108,0.4); color: var(--danger); }
+    .toast.success { border-color: rgba(74,222,128,0.4); color: var(--success); }
 
     .playlist-card {
       margin-top: 14px;
@@ -256,6 +353,33 @@
     .pl-item.downloading .state { background: var(--accent); color: #000; }
     .pl-item.done .state { background: rgba(74, 222, 128, 0.15); color: var(--success); }
     .pl-item.error .state { background: rgba(255, 92, 108, 0.15); color: var(--danger); }
+    .pl-item .retry-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--accent);
+      padding: 3px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .pl-item .retry-btn:hover { background: rgba(3, 218, 198, 0.1); }
+    .pl-item.error .name {
+      color: var(--danger);
+    }
+    .pl-item .error-msg {
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 3px;
+      white-space: normal;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
 
     /* sidebar / history */
     .sidebar-header {
@@ -369,15 +493,41 @@
 
       <div class="row-2" style="margin-top: 14px;">
         <select id="formatSelect">
-          <option value="mp3">MP3 (converted, universal)</option>
-          <option value="webm">WebM (original audio, highest quality)</option>
+          <optgroup label="Audio">
+            <option value="mp3">MP3 (converted, universal)</option>
+            <option value="m4a">M4A (native AAC)</option>
+            <option value="webm">WebM (original audio)</option>
+          </optgroup>
+          <optgroup label="Video (MP4)">
+            <option value="best">Best available</option>
+            <option value="1080">1080p</option>
+            <option value="720">720p</option>
+            <option value="480">480p</option>
+          </optgroup>
         </select>
         <button id="downloadBtn">Download</button>
       </div>
-      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--muted);cursor:pointer;user-select:none;">
-        <input type="checkbox" id="playlistToggle" style="width:auto;margin:0;accent-color:var(--accent);" />
-        Download entire playlist (if URL is a playlist)
-      </label>
+      <div class="opt-row">
+        <label class="opt">
+          <input type="checkbox" id="playlistToggle" />
+          <span>Download full playlist</span>
+        </label>
+        <label class="opt" id="subsLabel" title="Embed English subtitles (video only)">
+          <input type="checkbox" id="subsToggle" />
+          <span>Embed subtitles</span>
+        </label>
+        <label class="opt">
+          <span class="opt-sublabel">Cookies:</span>
+          <select id="cookiesSelect" class="opt-select">
+            <option value="none">None</option>
+            <option value="safari">Safari</option>
+            <option value="chrome">Chrome</option>
+            <option value="firefox">Firefox</option>
+            <option value="brave">Brave</option>
+            <option value="edge">Edge</option>
+          </select>
+        </label>
+      </div>
 
       <div class="status-card empty" id="statusCard">
         <div class="status-row">
@@ -385,7 +535,7 @@
           <span class="pill" id="statusPill">idle</span>
         </div>
         <div class="status-sub" id="statusSub">Paste a URL and click Download.</div>
-        <div class="progress-bar"><div class="progress-fill" id="progressBar"></div></div>
+        <div class="progress-bar" id="progressBarWrap"><div class="progress-fill" id="progressBar"></div></div>
         <div class="status-meta" id="statusMeta"></div>
         <img class="thumb" id="thumb" />
       </div>
@@ -427,11 +577,48 @@
     const statusPill = $('statusPill');
     const statusMeta = $('statusMeta');
     const progressBar = $('progressBar');
+    const progressBarWrap = $('progressBarWrap');
     const thumb = $('thumb');
     const historyList = $('historyList');
     const clearHistoryBtn = $('clearHistoryBtn');
     const repoLink = $('repoLink');
     const playlistToggle = $('playlistToggle');
+    const subsToggle = $('subsToggle');
+    const subsLabel = $('subsLabel');
+    const cookiesSelect = $('cookiesSelect');
+
+    // Enable subtitles toggle only for video presets
+    function updateSubsState() {
+      const isVideo = ['best', '1080', '720', '480'].includes(formatSelect.value);
+      subsLabel.classList.toggle('disabled', !isVideo);
+      if (!isVideo) subsToggle.checked = false;
+    }
+    formatSelect.addEventListener('change', () => {
+      updateSubsState();
+      saveUISettings();
+    });
+    subsToggle.addEventListener('change', saveUISettings);
+    cookiesSelect.addEventListener('change', saveUISettings);
+
+    async function saveUISettings() {
+      await window.electronAPI.updateSettings({
+        format: formatSelect.value,
+        subtitles: subsToggle.checked,
+        cookiesBrowser: cookiesSelect.value,
+      });
+    }
+
+    function toast(msg, kind) {
+      const t = document.createElement('div');
+      t.className = 'toast' + (kind ? ' ' + kind : '');
+      t.textContent = msg;
+      document.body.appendChild(t);
+      requestAnimationFrame(() => t.classList.add('show'));
+      setTimeout(() => {
+        t.classList.remove('show');
+        setTimeout(() => t.remove(), 300);
+      }, 3500);
+    }
     const playlistCard = $('playlistCard');
     const playlistTitle = $('playlistTitle');
     const playlistCount = $('playlistCount');
@@ -451,9 +638,16 @@
         .map((it) => {
           const label = { pending: 'waiting', downloading: 'downloading', done: 'done', error: 'failed' }[it.state] || 'waiting';
           const name = (it.title || '').replace(/</g, '&lt;');
+          const errMsg = it.state === 'error' && it.error
+            ? `<span class="error-msg">${it.error.replace(/</g, '&lt;')}</span>`
+            : '';
+          const retryBtn = it.state === 'error' && it.url
+            ? `<button class="retry-btn" data-retry="${it.index}">Retry</button>`
+            : '';
           return `<div class="pl-item ${it.state}">
             <span class="idx">${String(it.index).padStart(3, '0')}</span>
-            <span class="name">${name}</span>
+            <span class="name">${name}${errMsg}</span>
+            ${retryBtn}
             <span class="state">${label}</span>
           </div>`;
         })
@@ -475,7 +669,7 @@
     }
 
     function setPill(text, kind) {
-      statusPill.textContent = text;
+      statusPill.innerHTML = text;
       statusPill.className = 'pill' + (kind ? ' ' + kind : '');
     }
 
@@ -588,21 +782,26 @@
         return;
       }
       statusCard.classList.remove('empty');
-      statusTitle.textContent = 'Starting…';
+      statusTitle.innerHTML = '<span class="spinner"></span>Starting…';
       statusSub.textContent = 'First download takes ~15–20s while yt-dlp unpacks.';
       statusMeta.textContent = '';
       progressBar.style.width = '0%';
+      progressBarWrap.classList.add('indeterminate');
       thumb.classList.remove('show');
       playlistState = [];
       renderPlaylist();
-      setPill('working');
+      setPill('<span class="pulse-dot"></span>starting', 'working');
       setDownloading(true);
-      window.electronAPI.downloadAudio(url, format, playlistToggle.checked);
+      window.electronAPI.downloadAudio(url, format, {
+        playlist: playlistToggle.checked,
+        subtitles: subsToggle.checked,
+        cookiesBrowser: cookiesSelect.value,
+      });
     });
 
     window.electronAPI.onMeta((meta) => {
       if (meta.title) {
-        statusTitle.textContent = meta.title;
+        statusTitle.innerHTML = '<span class="spinner"></span>' + meta.title.replace(/</g, '&lt;');
         statusSub.textContent = meta.uploader || (meta.playlistCount ? `${meta.playlistCount} items` : '');
         if (meta.playlistCount) playlistTitle.textContent = meta.title;
       }
@@ -623,7 +822,30 @@
       it.state = data.state;
       if (data.title) it.title = data.title;
       if (data.filepath) it.filepath = data.filepath;
+      if (data.error) it.error = data.error;
+      if (data.state === 'downloading') it.error = null;
       renderPlaylist();
+    });
+
+    window.electronAPI.onHistoryUpdated((entries) => renderHistory(entries));
+
+    playlistItemsEl.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.retry-btn');
+      if (!btn) return;
+      const idx = parseInt(btn.dataset.retry, 10);
+      const it = playlistState.find((x) => x.index === idx);
+      if (!it || !it.url) return;
+      const plFolder = playlistTitle.textContent && playlistTitle.textContent !== 'Playlist'
+        ? playlistTitle.textContent.replace(/[\\/:*?"<>|]/g, '_')
+        : null;
+      window.electronAPI.retryItem({
+        url: it.url,
+        format: formatSelect.value,
+        index: idx,
+        playlistFolder: plFolder,
+        subtitles: subsToggle.checked,
+        cookiesBrowser: cookiesSelect.value,
+      });
     });
 
     window.electronAPI.onStatus((msg) => {
@@ -632,6 +854,7 @@
 
     window.electronAPI.onProgress((data) => {
       const pct = data && data.percent != null ? parseFloat(data.percent) : 0;
+      progressBarWrap.classList.remove('indeterminate');
       progressBar.style.width = `${pct}%`;
       const prefix = data.item && data.item.total && data.item.total !== 'NA' ? `[${data.item.index}/${data.item.total}] ` : '';
       setPill(`${prefix}${pct.toFixed(1)}%`, 'working');
@@ -644,6 +867,8 @@
 
     window.electronAPI.onComplete(async (payload) => {
       setDownloading(false);
+      progressBarWrap.classList.remove('indeterminate');
+      statusTitle.textContent = statusTitle.textContent.replace(/^\s*/, '');
       statusSub.textContent = 'Download complete';
       setPill('done', 'success');
       progressBar.style.width = '100%';
@@ -653,6 +878,13 @@
 
     window.electronAPI.onError((msg) => {
       setDownloading(false);
+      progressBarWrap.classList.remove('indeterminate');
+      const hasPartial = playlistState.some((i) => i.state === 'done' || i.state === 'error');
+      if (hasPartial) {
+        statusSub.textContent = 'Finished with some errors — use Retry on failed items below.';
+        setPill('partial', 'error');
+        return;
+      }
       statusTitle.textContent = 'Error';
       statusSub.textContent = msg || 'Unknown error';
       setPill('error', 'error');
@@ -667,6 +899,56 @@
 
     window.electronAPI.getSavedFolder().then(setFolder);
     refreshHistory();
+
+    window.electronAPI.getSettings().then((s) => {
+      if (s.format) formatSelect.value = s.format;
+      if (s.subtitles) subsToggle.checked = true;
+      if (s.cookiesBrowser) cookiesSelect.value = s.cookiesBrowser;
+      updateSubsState();
+    });
+
+    window.electronAPI.onTriggerUpdateYtdlp(async () => {
+      toast('Updating yt-dlp…');
+      const res = await window.electronAPI.updateYtdlp();
+      if (res.ok) toast(`yt-dlp updated to ${res.version}`, 'success');
+      else toast(`yt-dlp update failed: ${res.error}`, 'error');
+    });
+
+    window.electronAPI.onYtdlpUpdateStatus((data) => {
+      if (data.state === 'error') toast(data.message, 'error');
+    });
+
+    window.electronAPI.onNotify((msg) => toast(msg));
+
+    // Drag-and-drop URL support (drag a link from any browser into the window)
+    ['dragenter', 'dragover'].forEach((evt) => {
+      window.addEventListener(evt, (e) => {
+        e.preventDefault();
+        document.body.style.background = 'rgba(3,218,198,0.04)';
+      });
+    });
+    ['dragleave', 'drop'].forEach((evt) => {
+      window.addEventListener(evt, (e) => {
+        e.preventDefault();
+        document.body.style.background = '';
+      });
+    });
+    window.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+      if (url && /^https?:\/\//i.test(url.trim())) {
+        urlInput.value = url.trim();
+        urlInput.focus();
+        toast('URL dropped', 'success');
+      }
+    });
+
+    // Paste — clean URL and move focus to download button on valid paste
+    urlInput.addEventListener('paste', () => {
+      setTimeout(() => {
+        if (/^https?:\/\//i.test(urlInput.value.trim())) urlInput.blur();
+      }, 10);
+    });
   </script>
 </body>
 </html>
