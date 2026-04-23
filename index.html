@@ -1374,6 +1374,10 @@
         </button>
         <input type="text" class="browse-url" id="browseUrl" placeholder="youtube.com or any URL" spellcheck="false" />
         <button class="btn btn-secondary btn-sm" id="browseGo">Go</button>
+        <button class="btn btn-secondary btn-sm" id="browseImport" title="Import login cookies from Chrome">
+          <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"/><path d="M4 6v12c0 1.1.9 2 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>
+          Import Chrome
+        </button>
       </div>
       <div class="browse-body">
         <webview id="browseView" src="https://www.youtube.com" style="width:100%;height:100%;" partition="persist:browse" allowpopups></webview>

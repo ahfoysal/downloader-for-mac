@@ -691,16 +691,36 @@ function initBrowse() {
   if (webview.dataset.init) return;
   webview.dataset.init = '1';
 
+  const fabBadge = $('fabBadge');
+  function hostLabel(u) {
+    try {
+      const h = new URL(u).hostname.replace(/^www\./, '').split('.')[0];
+      return h.charAt(0).toUpperCase() + h.slice(1);
+    } catch (_) { return 'Video'; }
+  }
   function updateSendBtn(url) {
-    if (SUPPORTED_SITES_RE.test(url || '')) {
-      sendBtn.classList.remove('hidden');
+    const match = SUPPORTED_SITES_RE.test(url || '');
+    if (match) {
+      sendBtn.classList.add('show');
       sendBtn.dataset.url = url;
+      if (fabBadge) fabBadge.textContent = hostLabel(url);
     } else {
-      sendBtn.classList.add('hidden');
+      sendBtn.classList.remove('show');
     }
   }
   webview.addEventListener('did-navigate', (e) => { urlBar.value = e.url; updateSendBtn(e.url); });
   webview.addEventListener('did-navigate-in-page', (e) => { urlBar.value = e.url; updateSendBtn(e.url); });
+  // Fire once on initial load
+  webview.addEventListener('dom-ready', () => {
+    const u = webview.getURL();
+    urlBar.value = u;
+    updateSendBtn(u);
+  });
+  webview.addEventListener('did-finish-load', () => {
+    const u = webview.getURL();
+    urlBar.value = u;
+    updateSendBtn(u);
+  });
   webview.addEventListener('page-title-updated', () => { /* optional: show in status */ });
   webview.addEventListener('did-fail-load', (e) => {
     if (e.errorCode && e.errorCode !== -3) toast(`Load failed: ${e.errorDescription}`, 'error');
@@ -719,6 +739,23 @@ function initBrowse() {
     webview.loadURL(u);
   }
   $('browseGo').addEventListener('click', navigate);
+  const browseImport = $('browseImport');
+  if (browseImport) {
+    browseImport.addEventListener('click', async () => {
+      browseImport.disabled = true;
+      browseImport.textContent = 'Importing…';
+      const currentHost = (() => { try { return new URL(webview.getURL()).hostname.replace(/^www\./, ''); } catch (_) { return ''; } })();
+      const res = await api.importChromeCookies({ domainFilter: currentHost || null });
+      browseImport.disabled = false;
+      browseImport.innerHTML = `<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"/><path d="M4 6v12c0 1.1.9 2 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg> Import Chrome`;
+      if (res.ok) {
+        toast(`Imported ${res.imported}/${res.total} cookies — reloading`, 'success');
+        webview.reload();
+      } else {
+        toast(res.error || 'Import failed', 'error');
+      }
+    });
+  }
   urlBar.addEventListener('keydown', (e) => { if (e.key === 'Enter') navigate(); });
   sendBtn.addEventListener('click', async () => {
     const u = sendBtn.dataset.url || webview.getURL();

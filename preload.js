@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExtensionInstaller: (browser) => ipcRenderer.invoke('open-extension-installer', browser),
   launchWithExtension: (browser) => ipcRenderer.invoke('launch-with-extension', browser),
   installNativeHost: () => ipcRenderer.invoke('install-native-host'),
+  importChromeCookies: (opts) => ipcRenderer.invoke('import-chrome-cookies', opts || {}),
   getSiteDefault: (url) => ipcRenderer.invoke('get-site-default', url),
   setSiteDefault: (url, format) => ipcRenderer.invoke('set-site-default', { url, format }),
   savePlayPosition: (filepath, pos, duration) => ipcRenderer.invoke('save-play-position', { filepath, pos, duration }),

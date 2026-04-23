@@ -303,6 +303,49 @@ app.whenReady().then(() => {
   mainWindow.loadFile('index.html');
   buildMenu(mainWindow);
 
+  // Wire context menu for webview (Browse tab)
+  mainWindow.webContents.on('did-attach-webview', (_e, wc) => {
+    wc.on('context-menu', (e, params) => {
+      const { linkURL, pageURL, srcURL, selectionText } = params;
+      const template = [];
+      if (linkURL) template.push({
+        label: 'Send link to Downloader',
+        click: () => mainWindow.webContents.send('deep-link-url', linkURL),
+      });
+      if (srcURL) template.push({
+        label: 'Send media to Downloader',
+        click: () => mainWindow.webContents.send('deep-link-url', srcURL),
+      });
+      if (pageURL) template.push({
+        label: 'Send page to Downloader',
+        click: () => mainWindow.webContents.send('deep-link-url', pageURL),
+      });
+      if (linkURL || pageURL) template.push({ type: 'separator' });
+      template.push(
+        { role: 'back' },
+        { role: 'forward' },
+        { role: 'reload' },
+        { type: 'separator' },
+        { role: 'copy' },
+        { role: 'paste' },
+      );
+      if (linkURL) template.push({
+        label: 'Copy link',
+        click: () => require('electron').clipboard.writeText(linkURL),
+      });
+      if (selectionText) template.push({
+        label: 'Search Google for "' + selectionText.slice(0, 30) + '"',
+        click: () => wc.loadURL('https://www.google.com/search?q=' + encodeURIComponent(selectionText)),
+      });
+      Menu.buildFromTemplate(template).popup({ window: mainWindow });
+    });
+    // Handle new-window requests (target=_blank links) by loading in same view
+    wc.setWindowOpenHandler(({ url }) => {
+      wc.loadURL(url);
+      return { action: 'deny' };
+    });
+  });
+
   // Handle deep link passed at launch (macOS sometimes passes via argv).
   const link = process.argv.find((a) => a && a.startsWith('downloader://'));
   if (link) mainWindow.webContents.once('did-finish-load', () => handleDeepLink(link));
@@ -421,6 +464,106 @@ function detectInstalledBrowsers() {
   return Object.keys(apps).filter((k) => fs.existsSync(apps[k]));
 }
 ipcMain.handle('detect-browsers', () => detectInstalledBrowsers());
+
+// ===== Chrome cookie import for built-in browser =====
+// Reads ~/Library/Application Support/Google/Chrome/Default/Cookies (SQLite),
+// decrypts values using the AES key stored in macOS Keychain,
+// and injects into the webview's persist:browse session.
+const { session } = require('electron');
+ipcMain.handle('import-chrome-cookies', async (_e, { domainFilter } = {}) => {
+  try {
+    const { execFileSync } = require('child_process');
+    const cryptoM = require('crypto');
+    const home = app.getPath('home');
+    const profiles = ['Default', 'Profile 1', 'Profile 2', 'Profile 3', 'Profile 4'];
+    const cookiesDbs = profiles
+      .map((p) => path.join(home, 'Library/Application Support/Google/Chrome', p, 'Cookies'))
+      .filter(fs.existsSync);
+    if (cookiesDbs.length === 0) return { ok: false, error: 'Chrome cookies DB not found' };
+
+    // Get Chrome master password from Keychain
+    let passwd;
+    try {
+      passwd = execFileSync('security', ['find-generic-password', '-w', '-s', 'Chrome Safe Storage'], { encoding: 'utf8' }).trim();
+    } catch (err) {
+      return { ok: false, error: 'Keychain access denied — try again and approve the prompt' };
+    }
+    const key = cryptoM.pbkdf2Sync(passwd, 'saltysalt', 1003, 16, 'sha1');
+
+    const ses = session.fromPartition('persist:browse');
+    let total = 0;
+    let imported = 0;
+    for (const db of cookiesDbs) {
+      // Copy to a temp file so sqlite3 can read without locking issues
+      const tmp = path.join(app.getPath('temp'), `cookies-${Date.now()}.db`);
+      fs.copyFileSync(db, tmp);
+      let rows;
+      try {
+        const sql = `SELECT host_key, name, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite FROM cookies${domainFilter ? ` WHERE host_key LIKE '%${domainFilter.replace(/'/g,"''")}%'` : ''};`;
+        const raw = execFileSync('sqlite3', ['-separator', '\x1f', tmp, sql], { encoding: 'binary', maxBuffer: 100 * 1024 * 1024 });
+        rows = raw.split('\n').filter(Boolean).map((line) => {
+          const parts = line.split('\x1f');
+          return {
+            host: parts[0], name: parts[1],
+            // The encrypted_value is a BLOB. sqlite3 CLI emits binary bytes directly.
+            // But our -separator split on 0x1f may have split inside binary. Use readline instead.
+            encrypted: parts[2], path: parts[3],
+            expires: parseInt(parts[4]) || 0,
+            secure: parts[5] === '1', httpOnly: parts[6] === '1', sameSite: parts[7],
+          };
+        });
+      } catch (err) {
+        try { fs.unlinkSync(tmp); } catch (_) {}
+        continue;
+      }
+      try { fs.unlinkSync(tmp); } catch (_) {}
+
+      for (const row of rows) {
+        total++;
+        try {
+          const encBuf = Buffer.from(row.encrypted, 'binary');
+          if (encBuf.length < 3) continue;
+          const prefix = encBuf.slice(0, 3).toString();
+          if (prefix !== 'v10' && prefix !== 'v11') continue;
+          const iv = Buffer.alloc(16, 0x20); // 16 spaces
+          const decipher = cryptoM.createDecipheriv('aes-128-cbc', key, iv);
+          const body = encBuf.slice(3);
+          let decrypted;
+          try {
+            decrypted = Buffer.concat([decipher.update(body), decipher.final()]);
+          } catch (_) { continue; }
+          // Strip PKCS7 padding (createDecipheriv already does); then SHA256 prefix (32 bytes) on some Chrome versions
+          let value;
+          if (decrypted.length > 32 && row.name && row.name.length > 0) {
+            // Some newer Chrome versions prefix 32 bytes of SHA256(host||name) — detect by non-printable
+            const maybeStripped = decrypted.slice(32).toString('utf8');
+            const direct = decrypted.toString('utf8');
+            value = /[\x00-\x08\x0E-\x1F]/.test(direct) && !/[\x00-\x08\x0E-\x1F]/.test(maybeStripped)
+              ? maybeStripped
+              : direct;
+          } else {
+            value = decrypted.toString('utf8');
+          }
+          const host = row.host.startsWith('.') ? row.host.slice(1) : row.host;
+          await ses.cookies.set({
+            url: `${row.secure ? 'https' : 'http'}://${host}${row.path || '/'}`,
+            name: row.name,
+            value,
+            domain: row.host,
+            path: row.path || '/',
+            secure: row.secure,
+            httpOnly: row.httpOnly,
+            expirationDate: row.expires ? Math.floor(row.expires / 1000000 - 11644473600) : undefined,
+          });
+          imported++;
+        } catch (_) { /* skip bad row */ }
+      }
+    }
+    return { ok: true, total, imported };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 
 // ===== Native Messaging Host registration =====
 const NATIVE_HOST_NAME = 'com.ahfoysal.downloader_for_mac';
