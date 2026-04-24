@@ -1,5 +1,5 @@
 // main.js
-const { app, BrowserWindow, BrowserView, ipcMain, dialog, shell, Menu, Notification, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Notification, powerSaveBlocker } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -26,151 +26,6 @@ process.on('unhandledRejection', (reason) => {
 });
 process.on('uncaughtException', (err) => {
   console.error('[main] uncaught exception:', err);
-});
-
-// ===== BrowserView-based browser tabs =====
-// Replaces the buggy <webview> implementation. Each tab is a BrowserView
-// managed by the main process and sized via setBounds. Always fills the
-// rectangle we give it — no CSS flex / compositor quirks.
-const BROWSE_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-const browserTabs = new Map();   // id -> { view, url, title }
-let activeBrowserTab = null;
-let browseBounds = { x: 0, y: 130, width: 0, height: 0 };  // updated by renderer
-let browseVisible = false;
-let browseTabSeq = 0;
-
-function sendToRenderer(channel, payload) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(channel, payload);
-  }
-}
-
-function browserTabState() {
-  return Array.from(browserTabs.entries()).map(([id, t]) => ({
-    id, url: t.url, title: t.title, active: id === activeBrowserTab,
-  }));
-}
-
-function pushTabsState() { sendToRenderer('browse-tabs', browserTabState()); }
-
-function applyActiveBounds() {
-  if (!mainWindow) return;
-  for (const [id, t] of browserTabs) {
-    if (!browseVisible || id !== activeBrowserTab) {
-      try { t.view.setBounds({ x: 0, y: 0, width: 0, height: 0 }); } catch (_) {}
-    } else {
-      try { t.view.setBounds({ x: Math.round(browseBounds.x), y: Math.round(browseBounds.y), width: Math.max(0, Math.round(browseBounds.width)), height: Math.max(0, Math.round(browseBounds.height)) }); } catch (_) {}
-    }
-  }
-}
-
-function ensureAttached(view) {
-  if (!mainWindow) return;
-  const views = mainWindow.getBrowserViews();
-  if (!views.includes(view)) mainWindow.addBrowserView(view);
-}
-
-function createBrowserTab(url = 'https://www.google.com') {
-  const id = 't' + (++browseTabSeq);
-  const view = new BrowserView({
-    webPreferences: {
-      partition: 'persist:browse',
-      contextIsolation: true,
-      sandbox: true,
-    },
-  });
-  view.setAutoResize({ width: true, height: true });
-  try { view.webContents.setUserAgent(BROWSE_UA); } catch (_) {}
-
-  const wc = view.webContents;
-  wc.on('did-navigate', (_e, u) => { const t = browserTabs.get(id); if (t) { t.url = u; pushTabsState(); } });
-  wc.on('did-navigate-in-page', (_e, u) => { const t = browserTabs.get(id); if (t) { t.url = u; pushTabsState(); } });
-  wc.on('page-title-updated', (_e, title) => { const t = browserTabs.get(id); if (t) { t.title = title; pushTabsState(); } });
-  wc.on('did-fail-load', (_e, code, desc) => { if (code !== -3) sendToRenderer('browse-load-error', { id, code, desc }); });
-
-  wc.setWindowOpenHandler(({ url: newUrl }) => {
-    createBrowserTab(newUrl);
-    return { action: 'deny' };
-  });
-
-  wc.on('context-menu', (e, params) => {
-    const { linkURL, pageURL, srcURL, selectionText } = params;
-    const template = [];
-    if (linkURL) {
-      template.push({ label: 'Open link in new tab', click: () => createBrowserTab(linkURL) });
-      template.push({ label: 'Send link to Downloader', click: () => sendToRenderer('deep-link-url', linkURL) });
-    }
-    if (srcURL) template.push({ label: 'Send media to Downloader', click: () => sendToRenderer('deep-link-url', srcURL) });
-    if (pageURL) template.push({ label: 'Send page to Downloader', click: () => sendToRenderer('deep-link-url', pageURL) });
-    if (linkURL || pageURL) template.push({ type: 'separator' });
-    template.push({ role: 'back' }, { role: 'forward' }, { role: 'reload' }, { type: 'separator' }, { role: 'copy' }, { role: 'paste' });
-    if (linkURL) template.push({ label: 'Copy link', click: () => require('electron').clipboard.writeText(linkURL) });
-    if (selectionText) template.push({ label: `Search Google for "${selectionText.slice(0, 30)}"`, click: () => wc.loadURL('https://www.google.com/search?q=' + encodeURIComponent(selectionText)) });
-    Menu.buildFromTemplate(template).popup({ window: mainWindow });
-  });
-
-  browserTabs.set(id, { view, url, title: 'New tab' });
-  ensureAttached(view);
-  activeBrowserTab = id;
-  applyActiveBounds();
-  wc.loadURL(url);
-  pushTabsState();
-  return id;
-}
-
-function closeBrowserTab(id) {
-  const t = browserTabs.get(id);
-  if (!t) return;
-  try { mainWindow.removeBrowserView(t.view); } catch (_) {}
-  try { t.view.webContents.destroy(); } catch (_) {}
-  browserTabs.delete(id);
-  if (activeBrowserTab === id) {
-    const remaining = Array.from(browserTabs.keys());
-    activeBrowserTab = remaining[remaining.length - 1] || null;
-    if (!activeBrowserTab) createBrowserTab();  // always have one tab
-  }
-  applyActiveBounds();
-  pushTabsState();
-}
-
-ipcMain.handle('browse-create-tab', (_e, url) => createBrowserTab(url || 'https://www.google.com'));
-ipcMain.handle('browse-close-tab', (_e, id) => { closeBrowserTab(id); });
-ipcMain.handle('browse-switch-tab', (_e, id) => { if (browserTabs.has(id)) { activeBrowserTab = id; applyActiveBounds(); pushTabsState(); } });
-ipcMain.handle('browse-navigate', (_e, { id, url }) => {
-  const t = browserTabs.get(id || activeBrowserTab);
-  if (!t || !url) return;
-  let u = url.trim();
-  if (!/^https?:\/\//i.test(u) && !/^about:/.test(u)) {
-    if (/^[\w-]+(\.[\w-]+)+/.test(u)) u = 'https://' + u;
-    else u = 'https://www.google.com/search?q=' + encodeURIComponent(u);
-  }
-  t.view.webContents.loadURL(u);
-});
-ipcMain.handle('browse-back', () => {
-  const t = browserTabs.get(activeBrowserTab);
-  if (t && t.view.webContents.canGoBack()) t.view.webContents.goBack();
-});
-ipcMain.handle('browse-forward', () => {
-  const t = browserTabs.get(activeBrowserTab);
-  if (t && t.view.webContents.canGoForward()) t.view.webContents.goForward();
-});
-ipcMain.handle('browse-reload', () => {
-  const t = browserTabs.get(activeBrowserTab);
-  if (t) t.view.webContents.reload();
-});
-ipcMain.handle('browse-set-bounds', (_e, bounds) => {
-  if (!bounds) return;
-  browseBounds = bounds;
-  applyActiveBounds();
-});
-ipcMain.handle('browse-set-visible', (_e, visible) => {
-  browseVisible = !!visible;
-  applyActiveBounds();
-});
-ipcMain.handle('browse-get-tabs', () => browserTabState());
-ipcMain.handle('browse-current-url', () => {
-  const t = browserTabs.get(activeBrowserTab);
-  return t ? t.view.webContents.getURL() : '';
 });
 
 const ytDlpWrap = new YtDlpWrap();
@@ -531,11 +386,6 @@ app.whenReady().then(() => {
   startWatchFolder();
   startScheduler();
   startControlSocket();
-
-  // Wait for renderer to report bounds, then create the first browser tab
-  mainWindow.webContents.once('did-finish-load', () => {
-    if (browserTabs.size === 0) createBrowserTab('https://www.google.com');
-  });
 
   // Auto-install native host on first launch (idempotent, silent).
   if (!appSettings.nativeHostInstalled) {
