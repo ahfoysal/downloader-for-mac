@@ -752,6 +752,64 @@ qsa('.nav-tab').forEach((t) => t.addEventListener('click', () => setView(t.datas
 const librarySearch = $('librarySearch');
 librarySearch.addEventListener('input', renderLibrary);
 
+// Drag-drop local files to import into library (backend: ipcMain 'import-local-file').
+// Accept common audio/video extensions; reference-in-place (no copy) so we don't duplicate large files.
+const IMPORT_EXTS = new Set([
+  'mp3', 'm4a', 'aac', 'flac', 'wav', 'ogg', 'opus', 'wma',
+  'mp4', 'mkv', 'mov', 'avi', 'webm',
+]);
+let _dragDepth = 0;
+function showDropOverlay(on) {
+  let el = document.getElementById('dropOverlay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'dropOverlay';
+    el.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(10,10,12,0.82);display:flex;align-items:center;justify-content:center;pointer-events:none;backdrop-filter:blur(6px);border:3px dashed var(--accent,#3ddad7);font:600 20px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;color:#fff;text-align:center;padding:40px;';
+    el.innerHTML = 'Drop audio or video files to add to your library';
+    document.body.appendChild(el);
+  }
+  el.style.display = on ? 'flex' : 'none';
+}
+window.addEventListener('dragenter', (e) => {
+  if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+  _dragDepth++;
+  showDropOverlay(true);
+});
+window.addEventListener('dragover', (e) => {
+  if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }
+});
+window.addEventListener('dragleave', (e) => {
+  if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+  _dragDepth = Math.max(0, _dragDepth - 1);
+  if (_dragDepth === 0) showDropOverlay(false);
+});
+window.addEventListener('drop', async (e) => {
+  if (!e.dataTransfer || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+  e.preventDefault();
+  _dragDepth = 0;
+  showDropOverlay(false);
+  const files = Array.from(e.dataTransfer.files);
+  let imported = 0, skipped = 0, failed = 0;
+  for (const f of files) {
+    const ext = (f.name.split('.').pop() || '').toLowerCase();
+    if (!IMPORT_EXTS.has(ext)) { skipped++; continue; }
+    // Electron exposes the absolute path on File.path for dragged-in files.
+    const p = f.path;
+    if (!p) { failed++; continue; }
+    try {
+      const res = await api.importLocalFile(p, false);
+      if (res && res.ok) imported++; else failed++;
+    } catch (_) { failed++; }
+  }
+  if (imported) toast(`Imported ${imported} file${imported === 1 ? '' : 's'} to library`, 'success');
+  else if (skipped && !failed) toast(`Skipped ${skipped} unsupported file${skipped === 1 ? '' : 's'}`, 'info');
+  else if (failed) toast(`Import failed (${failed})`, 'error');
+  if (imported) renderLibrary();
+});
+
 async function renderLibrary() {
   // First, auto-heal: scan download folder for orphan files and add them to history
   try { await api.reconcileLibrary(); } catch (_) {}
