@@ -2516,8 +2516,8 @@
         </button>
       </div>
       <div class="browse-body" id="browseBody">
-        <!-- Webviews are injected dynamically per tab -->
-        <webview id="browseView" src="https://www.google.com" partition="persist:browse" allowpopups useragent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" data-tab="0"></webview>
+        <!-- BrowserViews are created in main process and positioned via bounds IPC -->
+        <div id="browseAnchor" style="position:absolute;inset:0;"></div>
         <button class="browse-fab" id="browseSend" title="Download this video">
           <svg class="ico fab-icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span>Download video</span>

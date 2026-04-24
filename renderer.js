@@ -40,16 +40,11 @@ function setView(name) {
   }
   if (name === 'browse') {
     initBrowse();
-    const webview = $('browseView');
-    const urlBar = $('browseUrl');
-    if (webview && urlBar) {
-      try {
-        const current = webview.getURL && webview.getURL();
-        if (current) urlBar.value = current;
-      } catch (_) {}
-    }
-    // Force-size webviews — belt & suspenders against CSS flex quirks
-    setTimeout(forceSizeWebviews, 30);
+    reportBrowseBounds();
+    api.browseSetVisible(true);
+  } else {
+    // Hide BrowserView when not on Browse tab
+    api.browseSetVisible(false);
   }
 }
 
@@ -1599,46 +1594,74 @@ function describeFormat(f) {
   return parts.join(' · ');
 }
 
-// ============ Browser tabs manager ============
-const browseTabs = [];  // [{ id, url, title, webview }]
-let activeTabIdx = 0;
-let tabSeq = 0;
+// ============ Browser tabs — BrowserView-based ============
+// All webview logic removed. Tabs live in main process as BrowserViews,
+// sized via IPC browseSetBounds. We only manage the tab bar UI + URL bar.
+let browseTabsState = [];   // [{ id, url, title, active }]
 
 function tabsBar() { return $('browseTabs'); }
 function newTabBtn() { return $('browseNewTab'); }
 function browseBody() { return $('browseBody'); }
 
+// Report content-area bounds to main so it can size BrowserViews.
+function reportBrowseBounds() {
+  const body = $('browseBody');
+  if (!body) return;
+  const r = body.getBoundingClientRect();
+  api.browseSetBounds({ x: r.left, y: r.top, width: r.width, height: r.height });
+}
+window.addEventListener('resize', reportBrowseBounds);
+// Poll every 500ms in case layout shifts due to mini-player / sidebar toggles
+setInterval(() => { if (state.view === 'browse') reportBrowseBounds(); }, 500);
+
 function renderTabs() {
   const bar = tabsBar();
   if (!bar) return;
   const plus = newTabBtn();
-  // Remove all existing .browse-tab children and rebuild
   [...bar.querySelectorAll('.browse-tab')].forEach((t) => t.remove());
-  browseTabs.forEach((t, i) => {
+  browseTabsState.forEach((t) => {
     const el = document.createElement('button');
-    el.className = 'browse-tab' + (i === activeTabIdx ? ' active' : '');
-    el.dataset.idx = i;
+    el.className = 'browse-tab' + (t.active ? ' active' : '');
+    el.dataset.id = t.id;
     const fav = (() => {
       try { const h = new URL(t.url || '').hostname; return h.replace(/^www\./, '').charAt(0).toUpperCase(); }
       catch (_) { return '•'; }
     })();
     el.innerHTML = `<span class="b-tab-favicon">${fav}</span>
       <span class="b-tab-title">${(t.title || t.url || 'Loading…').replace(/</g, '&lt;')}</span>
-      <span class="b-tab-close" data-close="${i}">×</span>`;
+      <span class="b-tab-close" data-close="${t.id}">×</span>`;
     el.addEventListener('click', (ev) => {
       if (ev.target.closest('[data-close]')) return;
-      switchToTab(i);
+      api.browseSwitchTab(t.id);
     });
     const closeBtn = el.querySelector('[data-close]');
-    if (closeBtn) closeBtn.addEventListener('click', (ev) => { ev.stopPropagation(); closeTab(i); });
+    if (closeBtn) closeBtn.addEventListener('click', (ev) => { ev.stopPropagation(); api.browseCloseTab(t.id); });
     bar.insertBefore(el, plus);
   });
+  // Reflect active tab url in URL bar
+  const active = browseTabsState.find((t) => t.active);
+  if (active) { const u = $('browseUrl'); if (u && document.activeElement !== u) u.value = active.url || ''; }
+}
+
+api.onBrowseTabs((tabs) => {
+  browseTabsState = tabs || [];
+  renderTabs();
+});
+
+function openNewTab(url) { api.browseCreateTab(url || 'https://www.google.com'); }
+function closeActiveTab() {
+  const active = browseTabsState.find((t) => t.active);
+  if (active) api.browseCloseTab(active.id);
 }
 
 const BROWSE_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const BROWSE_HOME = 'https://www.google.com';
 
-function createWebview(url) {
+// The rest of this block (createWebview/updateTabFromWebview/switchToTab/
+// openNewTab/closeTab/persistTabs/restoreTabs) is DEAD CODE from the old
+// <webview> era. Kept inert — unreachable because browser UI now calls
+// api.browseCreateTab / api.browseSwitchTab / api.browseCloseTab directly.
+function _deadCode_createWebview(url) {
   const wv = document.createElement('webview');
   wv.setAttribute('src', url || BROWSE_HOME);
   wv.setAttribute('partition', 'persist:browse');
@@ -1782,12 +1805,16 @@ function isVideoWatchUrl(u) {
   } catch (_) { return false; }
 }
 async function initBrowse() {
-  if (!browseTabs.length) await restoreTabs();
-  const webview = (browseTabs[activeTabIdx] && browseTabs[activeTabIdx].webview) || $('browseView');
   const urlBar = $('browseUrl');
   const sendBtn = $('browseSend');
-  if (webview.dataset.init) return;
-  webview.dataset.init = '1';
+  // Tell main to render the active BrowserView in the correct bounds
+  reportBrowseBounds();
+  await api.browseSetVisible(true);
+  // Load existing tabs state
+  const tabs = await api.browseGetTabs();
+  if (tabs) { browseTabsState = tabs; renderTabs(); }
+  if ($('browseBody').dataset.init) return;
+  $('browseBody').dataset.init = '1';
 
   const fabBadge = $('fabBadge');
   function hostLabel(u) {
@@ -1851,18 +1878,13 @@ async function initBrowse() {
     if (e.errorCode && e.errorCode !== -3) toast(`Load failed: ${e.errorDescription}`, 'error');
   });
 
-  function activeWv() { return (browseTabs[activeTabIdx] && browseTabs[activeTabIdx].webview) || webview; }
-  $('browseBack').addEventListener('click', () => { const w = activeWv(); if (w.canGoBack()) w.goBack(); });
-  $('browseForward').addEventListener('click', () => { const w = activeWv(); if (w.canGoForward()) w.goForward(); });
-  $('browseReload').addEventListener('click', () => activeWv().reload());
+  $('browseBack').addEventListener('click', () => api.browseBack());
+  $('browseForward').addEventListener('click', () => api.browseForward());
+  $('browseReload').addEventListener('click', () => api.browseReload());
   function navigate() {
-    let u = urlBar.value.trim();
+    const u = urlBar.value.trim();
     if (!u) return;
-    if (!/^https?:\/\//i.test(u) && !/^about:/.test(u)) {
-      if (/^[\w-]+(\.[\w-]+)+/.test(u)) u = 'https://' + u;
-      else u = 'https://www.google.com/search?q=' + encodeURIComponent(u);
-    }
-    activeWv().loadURL(u);
+    api.browseNavigate(null, u);
   }
   $('browseGo').addEventListener('click', navigate);
   const browseImport = $('browseImport');
@@ -2693,7 +2715,7 @@ document.addEventListener('keydown', (e) => {
   } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 't' && state.view === 'browse') {
     e.preventDefault(); openNewTab();
   } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'w' && state.view === 'browse') {
-    e.preventDefault(); closeTab(activeTabIdx);
+    e.preventDefault(); closeActiveTab();
   }
 });
 
