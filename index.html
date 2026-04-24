@@ -90,35 +90,55 @@
     .ico-sm { width: 14px; height: 14px; stroke-width: 2; }
     .ico-lg { width: 20px; height: 20px; }
 
-    /* ============ Top Nav ============ */
+    /* ============ Top Nav (modern pill-tabs) ============ */
     .nav {
-      height: 44px;
-      padding: 0 14px;
+      height: 52px;
+      padding: 0 16px;
       display: flex;
       align-items: center;
       gap: 4px;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
+      background: rgba(22, 22, 27, 0.72);
+      backdrop-filter: saturate(160%) blur(24px);
+      -webkit-backdrop-filter: saturate(160%) blur(24px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
       -webkit-app-region: drag;
+      position: relative;
+      z-index: 10;
     }
-    .nav .spacer { width: 70px; } /* macOS traffic light spacer */
-    .nav .tabs-group { display: flex; gap: 2px; -webkit-app-region: no-drag; }
+    body.theme-light .nav {
+      background: rgba(255, 255, 255, 0.72);
+      border-bottom-color: rgba(0, 0, 0, 0.06);
+    }
+    .nav .spacer { width: 70px; }
+    .nav .tabs-group {
+      display: flex;
+      gap: 4px;
+      background: var(--surface-2);
+      padding: 4px;
+      border-radius: 999px;
+      -webkit-app-region: no-drag;
+    }
     .nav-tab {
       background: transparent;
       border: none;
       color: var(--text-muted);
-      padding: 6px 14px;
+      padding: 7px 16px;
       font-size: 12.5px;
-      font-weight: 500;
-      border-radius: 6px;
+      font-weight: 600;
+      border-radius: 999px;
       cursor: pointer;
-      transition: color var(--t-fast), background var(--t-fast);
+      transition: color var(--t-fast), background 0.2s var(--ease), transform 0.15s;
       display: flex;
       align-items: center;
       gap: 6px;
+      white-space: nowrap;
     }
-    .nav-tab:hover { color: var(--text); background: var(--surface-2); }
-    .nav-tab.active { color: var(--text); background: var(--surface-3); }
+    .nav-tab:hover { color: var(--text); }
+    .nav-tab.active {
+      color: var(--text);
+      background: var(--surface);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    }
     .nav-right { margin-left: auto; display: flex; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
     .nav-icon-btn {
       background: transparent;
@@ -916,8 +936,18 @@
       margin-left: 4px;
     }
     .browse-new-tab:hover { background: var(--surface-2); color: var(--text); }
-    webview { display: none; }
-    webview.active { display: block; }
+    /* Webviews stack absolutely-positioned inside .browse-body so they
+       always fill the container regardless of flex-height quirks. */
+    .browse-body webview {
+      position: absolute;
+      inset: 0;
+      width: 100% !important;
+      height: 100% !important;
+      display: none !important;
+    }
+    .browse-body webview.active {
+      display: flex !important;
+    }
 
     /* ============ Browse view ============ */
     .browse-bar {

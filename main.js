@@ -816,6 +816,80 @@ ipcMain.handle('record-browse-visit', (_e, { url, title }) => {
   return appSettings.browseHistory;
 });
 ipcMain.handle('get-browse-history', () => appSettings.browseHistory || []);
+
+// Import local file → add to library by copying to download folder (or reference in-place)
+ipcMain.handle('import-local-file', (_e, { filepath, copy }) => {
+  if (!filepath || !fs.existsSync(filepath)) return { ok: false, error: 'file not found' };
+  let dest = filepath;
+  if (copy && selectedDownloadFolder) {
+    try {
+      dest = path.join(selectedDownloadFolder, path.basename(filepath));
+      if (!fs.existsSync(dest)) fs.copyFileSync(filepath, dest);
+    } catch (err) { return { ok: false, error: err.message }; }
+  }
+  const ext = path.extname(dest).slice(1).toLowerCase();
+  const title = path.basename(dest, path.extname(dest)).replace(/_/g, ' ');
+  const history = loadHistory();
+  // Dedup by path
+  if (history.some((h) => h.filepath === dest)) return { ok: true, alreadyExists: true };
+  history.unshift({
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    url: null,
+    format: ext,
+    title,
+    uploader: null,
+    thumbnail: null,
+    filepath: dest,
+    folder: path.dirname(dest),
+    timestamp: new Date().toISOString(),
+    imported: true,
+  });
+  saveHistory(history);
+  return { ok: true, filepath: dest };
+});
+
+// Detect partial download files (.part) in the download folder for resume banner
+ipcMain.handle('detect-partial-downloads', () => {
+  if (!selectedDownloadFolder || !fs.existsSync(selectedDownloadFolder)) return [];
+  const out = [];
+  function walk(dir, depth = 2) {
+    if (depth < 0) return;
+    try {
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (ent.name.startsWith('.')) continue;
+        const full = path.join(dir, ent.name);
+        if (ent.isDirectory()) walk(full, depth - 1);
+        else if (ent.name.endsWith('.part') || ent.name.endsWith('.ytdl')) {
+          try {
+            const stat = fs.statSync(full);
+            out.push({ filepath: full, size: stat.size, mtime: stat.mtimeMs });
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }
+  walk(selectedDownloadFolder);
+  return out;
+});
+
+ipcMain.handle('clear-partial-downloads', () => {
+  if (!selectedDownloadFolder) return { removed: 0 };
+  let removed = 0;
+  function walk(dir, depth = 2) {
+    if (depth < 0) return;
+    try {
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, ent.name);
+        if (ent.isDirectory()) walk(full, depth - 1);
+        else if (ent.name.endsWith('.part') || ent.name.endsWith('.ytdl')) {
+          try { fs.unlinkSync(full); removed++; } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }
+  walk(selectedDownloadFolder);
+  return { removed };
+});
 ipcMain.handle('clear-browse-history', () => {
   appSettings.browseHistory = [];
   saveSettings();
