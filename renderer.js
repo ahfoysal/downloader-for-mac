@@ -1642,18 +1642,16 @@ function renderTabs() {
   if (active) { const u = $('browseUrl'); if (u && document.activeElement !== u) u.value = active.url || ''; }
 }
 
-// Inline regex so there's no chance of TDZ from forward reference
-const __SUPPORTED_SITES_EARLY = /(youtube\.com|youtu\.be|vimeo\.com|twitter\.com|x\.com|tiktok\.com|soundcloud\.com|twitch\.tv|dailymotion\.com|bilibili\.com|facebook\.com|instagram\.com)/i;
-
 api.onBrowseTabs((tabs) => {
   browseTabsState = tabs || [];
   renderTabs();
+  // Update FAB based on active tab's URL
   const active = tabs.find((t) => t.active);
   const sendBtn = $('browseSend');
   const fabBadge = $('fabBadge');
   if (sendBtn) {
     const wasShown = sendBtn.classList.contains('show');
-    if (active && __SUPPORTED_SITES_EARLY.test(active.url || '')) {
+    if (active && SUPPORTED_SITES_RE.test(active.url || '')) {
       sendBtn.classList.add('show');
       sendBtn.dataset.url = active.url;
       if (fabBadge) {
