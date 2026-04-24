@@ -943,10 +943,12 @@
       inset: 0;
       width: 100% !important;
       height: 100% !important;
-      display: none !important;
+      visibility: hidden;
+      z-index: 0;
     }
     .browse-body webview.active {
-      display: flex !important;
+      visibility: visible;
+      z-index: 1;
     }
 
     /* ============ Browse view ============ */
