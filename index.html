@@ -169,7 +169,7 @@
 
     /* ============ Main layout ============ */
     .app {
-      height: calc(100vh - 44px);
+      height: calc(100vh - 52px);
       display: flex;
       overflow: hidden;
       position: relative;
@@ -975,21 +975,26 @@
       margin: 0 4px;
     }
     .browse-url:focus { border-color: var(--accent); }
-    .browse-body {
-      flex: 1 1 auto;
-      min-height: 0;
-      background: var(--bg);
-      position: relative;
-      overflow: hidden;
-    }
+    /* Browse view — concrete pixel math so flex doesn't eat the webview.
+       Nav 52 + tabs 36 + bar 42 = 130px chrome. */
     .view[data-view="browse"] {
       display: none;
-      flex-direction: column;
       padding: 0 !important;
-      min-height: 0;
+      overflow: hidden;
+      position: relative;
       height: 100%;
     }
-    .view[data-view="browse"].active { display: flex; }
+    .view[data-view="browse"].active { display: block; }
+    .browse-tabs { height: 36px; }
+    .browse-bar { height: 42px; }
+    .browse-body {
+      background: var(--bg);
+      position: absolute;
+      left: 0; right: 0;
+      top: 78px;   /* tabs + bar */
+      bottom: 0;
+      overflow: hidden;
+    }
 
     /* Floating Action Button (FAB) — VidMate style */
     .browse-fab {
@@ -2525,6 +2530,14 @@
         <div class="lib-head">
           <h2>Library</h2>
           <input type="text" class="lib-search-input" id="librarySearch" placeholder="Search…" spellcheck="false" />
+        </div>
+        <div class="lib-filters" id="libFilters">
+          <button class="lib-chip active" data-filter="all">All</button>
+          <button class="lib-chip" data-filter="ondisk">On disk</button>
+          <button class="lib-chip" data-filter="missing">Missing</button>
+          <button class="lib-chip" data-filter="audio">Audio</button>
+          <button class="lib-chip" data-filter="video">Video</button>
+          <button class="lib-chip" data-filter="history">Full history</button>
         </div>
         <div class="lib-stats" id="libraryStats"></div>
         <div id="libraryContainer"></div>
