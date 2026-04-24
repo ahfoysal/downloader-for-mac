@@ -1696,7 +1696,7 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
     try { powerBlockerId = powerSaveBlocker.start('prevent-app-suspension'); } catch (_) {}
   }
 
-  let meta = { title: null, uploader: null, duration: null, thumbnail: null, playlistCount: null };
+  let meta = { title: null, uploader: null, duration: null, thumbnail: null, playlistCount: null, chapters: null };
   let playlistItems = [];
   if (skipProbe) {
     // Renderer already probed this URL; reuse the result, skip yt-dlp call.
@@ -1726,6 +1726,10 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
         duration: info.duration || null,
         thumbnail: info.thumbnail || (info.thumbnails && info.thumbnails[info.thumbnails.length - 1]?.url) || null,
         playlistCount: isPl ? (info.playlist_count || (info.entries && info.entries.length) || null) : null,
+        // YouTube chapters (array of { start_time, end_time, title }) captured from yt-dlp info-json
+        chapters: Array.isArray(info.chapters) && info.chapters.length
+          ? info.chapters.map((c) => ({ start: Number(c.start_time) || 0, end: Number(c.end_time) || 0, title: String(c.title || '').slice(0, 200) }))
+          : null,
       };
       send('download-meta', meta);
       if (isPl && playlist && Array.isArray(info.entries)) {
@@ -2085,6 +2089,7 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
         timestamp: now,
         durationMs,
         playlist: isPl ? meta.title : null,
+        chapters: meta.chapters || null,
       });
     }
     if (!entries) entries = loadHistory();

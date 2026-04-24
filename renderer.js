@@ -1140,6 +1140,7 @@ async function playFile(filepath, title, entry) {
 
   const match = state.history.find((e) => e.filepath === filepath);
   const thumbUrl = (entry && entry.thumbnail) || (match && match.thumbnail) || null;
+  applyChaptersForEntry(entry || match);
 
   if (currentIsAudio) {
     // Show thumbnail + hide video element (audio-only has no visual track)
@@ -1303,6 +1304,92 @@ if (musicFullBtn) musicFullBtn.addEventListener('click', () => {
 });
 playerVideo.addEventListener('enterpictureinpicture', () => musicPipBtn && musicPipBtn.classList.add('active'));
 playerVideo.addEventListener('leavepictureinpicture', () => musicPipBtn && musicPipBtn.classList.remove('active'));
+
+// ============ Chapters (YouTube) ============
+// Populated by playFile() when the history entry has chapters. Each = { start, end, title }
+let currentChapters = null;
+const musicChaptersBtn = $('musicChaptersBtn');
+
+function fmtChapterTime(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`;
+}
+
+function renderChapterMarkers() {
+  // Remove old markers
+  musicBar.querySelectorAll('.chapter-marker').forEach((n) => n.remove());
+  if (!currentChapters || !playerVideo.duration || !isFinite(playerVideo.duration)) return;
+  const dur = playerVideo.duration;
+  currentChapters.forEach((c) => {
+    if (!(c.start > 0) || c.start >= dur) return;
+    const m = document.createElement('div');
+    m.className = 'chapter-marker';
+    m.title = c.title;
+    m.style.cssText = `position:absolute;top:0;bottom:0;left:${(c.start / dur * 100).toFixed(3)}%;width:2px;background:rgba(255,255,255,0.55);pointer-events:none;z-index:3;`;
+    musicBar.appendChild(m);
+  });
+}
+
+function showChaptersPopover() {
+  let pop = document.getElementById('chaptersPopover');
+  if (!pop) {
+    pop = document.createElement('div');
+    pop.id = 'chaptersPopover';
+    pop.style.cssText = 'position:fixed;z-index:10000;background:var(--panel,#18181c);border:1px solid var(--border,rgba(255,255,255,0.1));border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.5);padding:6px;min-width:280px;max-width:420px;max-height:340px;overflow-y:auto;font-size:12.5px;';
+    document.body.appendChild(pop);
+    document.addEventListener('click', (e) => {
+      if (!pop) return;
+      if (e.target === musicChaptersBtn || musicChaptersBtn.contains(e.target)) return;
+      if (!pop.contains(e.target)) pop.style.display = 'none';
+    });
+  }
+  if (!currentChapters) { pop.style.display = 'none'; return; }
+  const now = playerVideo.currentTime || 0;
+  pop.innerHTML = currentChapters.map((c, i) => {
+    const active = now >= c.start && (c.end ? now < c.end : (i === currentChapters.length - 1 || now < currentChapters[i + 1].start));
+    return `<div class="chapter-row" data-idx="${i}" style="display:flex;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;${active ? 'background:rgba(61,218,215,0.14);color:var(--accent);' : ''}">
+      <span style="color:var(--text-dim);font-variant-numeric:tabular-nums;min-width:48px;">${fmtChapterTime(c.start)}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(c.title || '').replace(/</g,'&lt;')}</span>
+    </div>`;
+  }).join('');
+  pop.querySelectorAll('.chapter-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      const idx = Number(row.dataset.idx);
+      const c = currentChapters[idx];
+      if (c && isFinite(c.start)) { playerVideo.currentTime = c.start; if (playerVideo.paused) playerVideo.play().catch(() => {}); }
+      pop.style.display = 'none';
+    });
+    row.addEventListener('mouseenter', () => { if (!row.style.background) row.style.background = 'rgba(255,255,255,0.04)'; });
+    row.addEventListener('mouseleave', () => { if (row.style.background === 'rgba(255, 255, 255, 0.04)') row.style.background = ''; });
+  });
+  const r = musicChaptersBtn.getBoundingClientRect();
+  pop.style.display = 'block';
+  const popW = pop.offsetWidth || 300;
+  pop.style.left = Math.max(8, Math.min(window.innerWidth - popW - 8, r.left + r.width / 2 - popW / 2)) + 'px';
+  pop.style.bottom = (window.innerHeight - r.top + 8) + 'px';
+  pop.style.top = 'auto';
+}
+
+if (musicChaptersBtn) musicChaptersBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const pop = document.getElementById('chaptersPopover');
+  if (pop && pop.style.display === 'block') { pop.style.display = 'none'; return; }
+  showChaptersPopover();
+});
+
+function applyChaptersForEntry(entry) {
+  const ch = (entry && Array.isArray(entry.chapters) && entry.chapters.length) ? entry.chapters : null;
+  currentChapters = ch;
+  if (musicChaptersBtn) musicChaptersBtn.style.display = ch ? 'inline-flex' : 'none';
+  const pop = document.getElementById('chaptersPopover');
+  if (pop) pop.style.display = 'none';
+  renderChapterMarkers();
+}
+
+playerVideo.addEventListener('loadedmetadata', renderChapterMarkers);
 
 function closePlayer() {
   if (currentPlaying && playerVideo.duration) api.savePlayPosition(currentPlaying, playerVideo.currentTime, playerVideo.duration);
