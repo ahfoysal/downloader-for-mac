@@ -60,8 +60,6 @@ function applyActiveBounds() {
     if (!browseVisible || id !== activeBrowserTab) {
       try { t.view.setBounds({ x: 0, y: 0, width: 0, height: 0 }); } catch (_) {}
     } else {
-      // If renderer reported zero-size bounds (rect not measured yet),
-      // fall back to full-width below the 130px chrome strip.
       const hasValid = browseBounds && browseBounds.width > 100 && browseBounds.height > 100;
       const b = hasValid ? browseBounds : { x: 0, y: 130, width: winW, height: winH - 130 };
       try {
@@ -71,10 +69,11 @@ function applyActiveBounds() {
           width: Math.max(0, Math.round(b.width)),
           height: Math.max(0, Math.round(b.height)),
         });
-      } catch (_) {}
+        const got = t.view.getBounds();
+        console.log('[browse] SET', { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height) }, 'GOT', got);
+      } catch (e) { console.error('[browse] setBounds failed', e); }
     }
   }
-  console.log('[browse] bounds active=', activeBrowserTab, 'visible=', browseVisible, 'bounds=', browseBounds, 'win=', winW, winH);
 }
 
 function ensureAttached(view) {
