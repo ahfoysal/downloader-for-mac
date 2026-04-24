@@ -1617,8 +1617,6 @@ function createWebview(url) {
   wv.setAttribute('partition', 'persist:browse');
   wv.setAttribute('allowpopups', '');
   wv.setAttribute('useragent', BROWSE_UA);
-  wv.style.width = '100%';
-  wv.style.height = '100%';
   wv.dataset.tab = String(tabSeq);
   // Wire events on the new webview
   wv.addEventListener('did-navigate', (e) => { updateTabFromWebview(wv, e.url); });
