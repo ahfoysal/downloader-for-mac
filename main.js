@@ -817,6 +817,68 @@ ipcMain.handle('record-browse-visit', (_e, { url, title }) => {
 });
 ipcMain.handle('get-browse-history', () => appSettings.browseHistory || []);
 
+// App info — version, commit SHA, branding
+ipcMain.handle('get-app-info', () => {
+  const pkg = (() => {
+    try {
+      const pkgPath = app.isPackaged
+        ? path.join(process.resourcesPath, 'app.asar', 'package.json')
+        : path.join(__dirname, 'package.json');
+      return JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    } catch (_) { return { version: '—' }; }
+  })();
+
+  let commit = null;
+  let branch = null;
+  let commitDate = null;
+  try {
+    // In dev, read .git/HEAD directly (no git binary needed)
+    const gitDir = path.join(__dirname, '.git');
+    if (fs.existsSync(gitDir)) {
+      const head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+      if (head.startsWith('ref:')) {
+        const refPath = head.slice(5).trim();
+        branch = refPath.replace('refs/heads/', '');
+        const sha = fs.readFileSync(path.join(gitDir, refPath), 'utf8').trim();
+        commit = sha.slice(0, 7);
+        // Commit date from loose-object if available
+        try {
+          const stat = fs.statSync(path.join(gitDir, refPath));
+          commitDate = stat.mtime.toISOString().slice(0, 10);
+        } catch (_) {}
+      } else {
+        commit = head.slice(0, 7);
+      }
+    }
+    // Fallback: a build-embedded version.json written at CI time
+    if (!commit) {
+      const vPath = app.isPackaged
+        ? path.join(process.resourcesPath, 'version.json')
+        : path.join(__dirname, 'version.json');
+      if (fs.existsSync(vPath)) {
+        const v = JSON.parse(fs.readFileSync(vPath, 'utf8'));
+        commit = v.commit || null;
+        branch = v.branch || null;
+        commitDate = v.date || null;
+      }
+    }
+  } catch (_) {}
+
+  return {
+    name: 'Downloader for Mac',
+    version: pkg.version || '—',
+    author: 'ahfoysal',
+    repo: 'https://github.com/ahfoysal/downloader-for-mac',
+    commit,
+    branch,
+    commitDate,
+    electron: process.versions.electron,
+    node: process.versions.node,
+    platform: process.platform,
+    arch: process.arch,
+  };
+});
+
 // Import local file → add to library by copying to download folder (or reference in-place)
 ipcMain.handle('import-local-file', (_e, { filepath, copy }) => {
   if (!filepath || !fs.existsSync(filepath)) return { ok: false, error: 'file not found' };

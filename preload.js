@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   recordBrowseVisit: (payload) => ipcRenderer.invoke('record-browse-visit', payload),
   getBrowseHistory: () => ipcRenderer.invoke('get-browse-history'),
   clearBrowseHistory: () => ipcRenderer.invoke('clear-browse-history'),
+  getAppInfo: () => ipcRenderer.invoke('get-app-info'),
   listChannels: () => ipcRenderer.invoke('list-channels'),
   addChannel: (payload) => ipcRenderer.invoke('add-channel', payload),
   removeChannel: (id) => ipcRenderer.invoke('remove-channel', id),

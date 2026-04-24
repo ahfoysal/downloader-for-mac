@@ -1279,7 +1279,65 @@ async function refreshChannels() {
   }));
 }
 
+// App info + auto-update checker
+async function loadAboutInfo() {
+  try {
+    const info = await api.getAppInfo();
+    if (!info) return;
+    $('aboutVersion') && ($('aboutVersion').textContent = 'v' + (info.version || '—'));
+    $('aboutCommit') && ($('aboutCommit').textContent = info.commit || '—');
+    $('aboutBranch') && ($('aboutBranch').textContent = info.branch || '—');
+    $('aboutElectron') && ($('aboutElectron').textContent = info.electron || '—');
+    $('aboutPlatform') && ($('aboutPlatform').textContent = `${info.platform}-${info.arch}`);
+    const repoA = $('aboutRepo');
+    const relA = $('aboutReleases');
+    const authA = $('aboutAuthor');
+    if (repoA) repoA.href = info.repo;
+    if (relA) relA.href = info.repo + '/releases';
+    if (authA) authA.href = 'https://github.com/ahfoysal';
+    [repoA, relA, authA].forEach((a) => {
+      if (!a) return;
+      a.addEventListener('click', (e) => { e.preventDefault(); window.open(a.href); });
+    });
+    checkLatestVersion(info);
+  } catch (_) {}
+}
+
+async function checkLatestVersion(info) {
+  try {
+    const res = await fetch('https://api.github.com/repos/ahfoysal/downloader-for-mac/releases/latest');
+    if (!res.ok) return;
+    const json = await res.json();
+    const latest = (json.tag_name || '').replace(/^v/, '');
+    const current = (info.version || '').replace(/^v/, '');
+    if (latest && semverGt(latest, current)) {
+      const banner = document.createElement('div');
+      banner.className = 'about-update-banner show';
+      banner.innerHTML = `🎉 New version <strong>v${latest}</strong> available. <a href="${json.html_url}" target="_blank">Download</a>`;
+      banner.querySelector('a').addEventListener('click', (e) => { e.preventDefault(); window.open(json.html_url); });
+      const block = $('aboutBlock');
+      if (block) {
+        const existing = block.querySelector('.about-update-banner');
+        if (existing) existing.remove();
+        block.appendChild(banner);
+      }
+    }
+  } catch (_) {}
+}
+
+function semverGt(a, b) {
+  const pa = a.split(/[.-]/).map((n) => parseInt(n) || 0);
+  const pb = b.split(/[.-]/).map((n) => parseInt(n) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const av = pa[i] || 0, bv = pb[i] || 0;
+    if (av > bv) return true;
+    if (av < bv) return false;
+  }
+  return false;
+}
+
 async function openSettings() {
+  loadAboutInfo();
   const s = await api.getSettings();
   state.settings = s;
   const setTheme = $('setTheme');
