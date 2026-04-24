@@ -964,6 +964,16 @@ ipcMain.handle('clear-browse-history', () => {
   return [];
 });
 
+// macOS dock badge (ignored on Windows/Linux — app.dock is undefined).
+ipcMain.handle('set-dock-badge', (_e, text) => {
+  try {
+    if (process.platform === 'darwin' && app.dock && typeof app.dock.setBadge === 'function') {
+      app.dock.setBadge(text == null ? '' : String(text));
+    }
+    return { ok: true };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
 // Metadata editor: read existing tags. MP3 via node-id3 (synchronous),
 // M4A / other audio via ffprobe (ffmpeg -i stderr parse).
 ipcMain.handle('read-metadata', (_e, filepath) => {

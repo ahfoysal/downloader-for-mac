@@ -1,32 +1,22 @@
 {
   "name": "youtube-music-downloader",
-  "version": "1.0.0",
+  "version": "4.0.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Refloow/YouTube-Music-Download.git"
+    "url": "git+https://github.com/ahfoysal/downloader-for-mac.git"
   },
   "private": true,
   "author": {
-    "name": "Refloow",
-    "email": "legal@refloow.com",
-    "url": "https://refloow.com"
-  },
-  "contributors": [
-    {
-      "name": "Veljko Vuckovic",
-      "url": "https://github.com/Refloow"
-    }
-  ],
-  "funding": {
-    "type": "individual",
-    "url": "https://refloow.com"
+    "name": "ahfoysal",
+    "email": "ahfoysal30@gmail.com",
+    "url": "https://github.com/ahfoysal"
   },
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/Refloow/YouTube-Music-Download/issues"
+    "url": "https://github.com/ahfoysal/downloader-for-mac/issues"
   },
-  "homepage": "https://github.com/Refloow/YouTube-Music-Download",
-  "description": "Simple native macOS app for downloading audio from YouTube.",
+  "homepage": "https://github.com/ahfoysal/downloader-for-mac",
+  "description": "Native macOS + Windows app for downloading audio & video from YouTube and other sites. yt-dlp + ffmpeg, Spotify-style player with lyrics, library, browser extension, channel subscriptions.",
   "main": "main.js",
   "scripts": {
     "postinstall": "node scripts/fetch-binaries.js",
@@ -37,7 +27,7 @@
     "dist:mac:universal": "cross-env USE_HARD_LINKS=false ELECTRON_BUILDER_DISABLE_MIRROR=true electron-builder --mac --universal"
   },
   "build": {
-    "appId": "com.refloow.ytdownloader",
+    "appId": "com.ahfoysal.downloader-for-mac",
     "productName": "Downloader for Mac",
     "directories": {
       "output": "dist"
@@ -99,7 +89,6 @@
     }
   },
   "dependencies": {
-    "ffmpeg-static": "^5.1.0",
     "node-id3": "^0.2.9",
     "yt-dlp-wrap": "^2.3.2"
   },
