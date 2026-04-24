@@ -2206,6 +2206,8 @@ function buildCommands() {
     { label: 'Open Browser', sub: '⌘3', icon: '🌐', run: () => setView('browse') },
     { label: 'Settings', sub: '⌘,', icon: '⚙︎', run: () => openSettings() },
     { label: 'Activity log', sub: 'See recent events', icon: '≡', run: () => openActivity() },
+    { label: 'Listening stats', sub: 'Top tracks / artists', icon: '📊', run: () => openStats() },
+    { label: 'Debug console', sub: 'Live yt-dlp log', icon: '⚡', run: () => openDebug() },
     { label: 'Keyboard shortcuts', sub: '?', icon: '⌨', run: () => openHelp() },
     { label: 'Install browser extension', sub: 'Chrome / Firefox / Safari', icon: '🧩', run: () => openInstaller() },
     { label: 'Update yt-dlp', sub: 'Fetch latest binary', icon: '⟳', run: async () => { toast('Updating yt-dlp…'); const r = await api.updateYtdlp(); toast(r.ok ? 'Updated' : 'Failed', r.ok ? 'success' : 'error'); } },
@@ -2342,6 +2344,64 @@ async function openActivity() {
   $('activityModal').classList.add('show');
 }
 $('activityClose') && $('activityClose').addEventListener('click', () => $('activityModal').classList.remove('show'));
+
+// ============ Listening stats dashboard ============
+async function openStats() {
+  const counts = await api.getPlayCounts();
+  const history = await api.getHistory();
+  const byPath = new Map(history.map((h) => [h.filepath, h]));
+  const tracks = Object.entries(counts)
+    .map(([fp, c]) => ({ ...byPath.get(fp), filepath: fp, plays: c }))
+    .sort((a, b) => b.plays - a.plays);
+  const totalPlays = tracks.reduce((s, t) => s + t.plays, 0);
+  const uploaders = {};
+  tracks.forEach((t) => { if (t.uploader) uploaders[t.uploader] = (uploaders[t.uploader] || 0) + t.plays; });
+  const topArtists = Object.entries(uploaders).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const totalDownloads = history.length;
+  const formats = {};
+  history.forEach((h) => { if (h.format) formats[h.format] = (formats[h.format] || 0) + 1; });
+
+  const row = (label, value) => `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12.5px;"><span style="color:var(--text-muted);">${label}</span><span style="font-weight:600;">${value}</span></div>`;
+  let html = `<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin:0 0 10px;">Overview</h3>`;
+  html += row('Total downloads', totalDownloads);
+  html += row('Total plays', totalPlays);
+  html += row('Unique tracks played', tracks.length);
+  html += `<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin:18px 0 10px;">Top tracks</h3>`;
+  if (tracks.length === 0) {
+    html += `<div style="color:var(--text-muted);font-size:12px;padding:8px 0;">No plays yet.</div>`;
+  } else {
+    tracks.slice(0, 8).forEach((t, i) => {
+      html += `<div style="display:flex;gap:10px;padding:6px 0;font-size:12px;border-bottom:1px solid var(--border);">
+        <span style="color:var(--text-dim);min-width:20px;">${i + 1}</span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(t.title || t.filepath.split('/').pop()).replace(/</g,'&lt;')}</span>
+        <span style="color:var(--accent);font-variant-numeric:tabular-nums;">${t.plays}×</span>
+      </div>`;
+    });
+  }
+  html += `<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin:18px 0 10px;">Top artists</h3>`;
+  if (topArtists.length === 0) html += `<div style="color:var(--text-muted);font-size:12px;padding:8px 0;">—</div>`;
+  else topArtists.forEach(([name, cnt]) => {
+    html += row(name, cnt + ' plays');
+  });
+  html += `<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin:18px 0 10px;">Formats</h3>`;
+  Object.entries(formats).sort((a,b) => b[1]-a[1]).forEach(([f, c]) => html += row(f.toUpperCase(), c));
+  $('statsContent').innerHTML = html;
+  $('statsModal').classList.add('show');
+}
+$('statsClose') && $('statsClose').addEventListener('click', () => $('statsModal').classList.remove('show'));
+
+// ============ Debug console ============
+async function openDebug() {
+  const log = await api.getActivityLog();
+  const lines = log.map((e) => `[${e.ts}] ${e.type.toUpperCase()}  ${e.msg || ''}`).join('\n');
+  $('debugContent').textContent = lines || '(no activity yet)';
+  $('debugModal').classList.add('show');
+}
+$('debugClose') && $('debugClose').addEventListener('click', () => $('debugModal').classList.remove('show'));
+$('debugCopy') && $('debugCopy').addEventListener('click', () => {
+  navigator.clipboard.writeText($('debugContent').textContent);
+  toast('Log copied to clipboard', 'success');
+});
 $('activityClear') && $('activityClear').addEventListener('click', async () => { await api.clearActivityLog(); openActivity(); });
 
 // ============ Global keyboard shortcuts ============

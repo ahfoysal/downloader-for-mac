@@ -2469,6 +2469,36 @@
     </div>
   </div>
 
+  <!-- ============ Stats dashboard ============ -->
+  <div class="modal" id="statsModal">
+    <div class="modal-body" style="width:560px;">
+      <div class="modal-head">
+        <h2>Listening stats</h2>
+        <p>Everything local — nothing leaves your Mac.</p>
+      </div>
+      <div class="modal-content" id="statsContent" style="min-height:280px;"></div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="statsClose">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Debug console ============ -->
+  <div class="modal" id="debugModal">
+    <div class="modal-body" style="width:720px;">
+      <div class="modal-head">
+        <h2>Debug console</h2>
+      </div>
+      <div class="modal-content" style="max-height:60vh;overflow-y:auto;font-family:'SF Mono',Menlo,monospace;font-size:11px;">
+        <pre id="debugContent" style="white-space:pre-wrap;color:var(--text);margin:0;"></pre>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="debugClose">Close</button>
+        <button class="btn btn-secondary" id="debugCopy">Copy</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ============ Metadata editor ============ -->
   <div class="modal" id="metaModal">
     <div class="modal-body" style="width:480px;">
