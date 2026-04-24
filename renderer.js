@@ -8,19 +8,20 @@ const qsa = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 // ============ State ============
 const state = {
-  mode: 'idle',                  // idle | ready | downloading | done | error | queue
-  view: 'download',              // download | library | browse
+  mode: 'idle',
+  view: 'download',
   urlInput: '',
   analyzedUrl: null,
-  meta: null,                    // {title, uploader, duration, thumbnail, formats[]}
+  meta: null,
   selectedFormatId: null,
-  selectedTile: 'audio',         // audio | video
+  selectedTile: 'audio',
   lastDownloadedFile: null,
   lastError: null,
   queueState: { active: [], queued: [] },
   playlistState: [],
   settings: {},
   history: [],
+  sessionStarted: false,
 };
 
 // ============ Mode controller ============
@@ -32,7 +33,18 @@ function setView(name) {
   document.body.classList.toggle('view-library', name === 'library');
   document.body.classList.toggle('view-download', name === 'download');
   if (name === 'library') renderLibrary();
-  if (name === 'browse') initBrowse();
+  if (name === 'browse') {
+    initBrowse();
+    // Refresh URL bar to current webview URL (B6 fix)
+    const webview = $('browseView');
+    const urlBar = $('browseUrl');
+    if (webview && urlBar) {
+      try {
+        const current = webview.getURL && webview.getURL();
+        if (current) urlBar.value = current;
+      } catch (_) {}
+    }
+  }
 }
 
 function setMode(name) {
@@ -419,10 +431,20 @@ $('btnErrorDismiss').addEventListener('click', () => setMode('idle'));
 $('btnErrorRetry').addEventListener('click', () => { setMode('idle'); btnDownload.click(); });
 
 // ============ Queue panel ============
+let queueRenderTimer = null;
+function scheduleQueueRender() {
+  if (queueRenderTimer) return;
+  queueRenderTimer = requestAnimationFrame(() => {
+    queueRenderTimer = null;
+    renderQueue();
+  });
+}
+
 api.onQueueState((data) => {
   const prevTotal = state.queueState.active.length + state.queueState.queued.length;
   state.queueState = data;
-  renderQueue();
+  // Throttle DOM re-renders to once per animation frame
+  scheduleQueueRender();
   const total = data.active.length + data.queued.length;
   // >1 parallel → queue view
   if (total > 1) {
@@ -653,7 +675,9 @@ function isAudioFile(filepath) {
   return AUDIO_EXTS.includes(ext);
 }
 
-function getActiveMediaEl() { return playerVideo; }
+// Unified: video element plays both audio and video files.
+// Previously split into audio/video elements; keep alias for safety.
+function getActiveMediaEl() { return playerVideo; }  // kept as helper; always video element
 
 function fmtTime(s) {
   if (!s || !isFinite(s)) return '0:00';
@@ -720,12 +744,11 @@ async function playFile(filepath, title, entry) {
   // Always show the mini-player. Only open expanded view on first play of a session.
   syncMini();
   renderQueueList();
-  if (!sessionStarted) {
-    sessionStarted = true;
+  if (!state.sessionStarted) {
+    state.sessionStarted = true;
     player.classList.add('show');
   }
 }
-let sessionStarted = false;
 
 async function loadResumePosition(el, filepath) {
   const saved = await api.getPlayPosition(filepath);
@@ -1012,10 +1035,14 @@ async function openSettings() {
       });
     });
   }
-  if (setTheme) setTheme.addEventListener('change', () => {
-    applyTheme(setTheme.value, (state.settings && state.settings.accent) || 'teal');
-    api.updateSettings({ theme: setTheme.value });
-  }, { once: true });
+  // Bind once at first open; flag on element so we don't double-bind.
+  if (setTheme && !setTheme.dataset.bound) {
+    setTheme.dataset.bound = '1';
+    setTheme.addEventListener('change', () => {
+      applyTheme(setTheme.value, (state.settings && state.settings.accent) || 'teal');
+      api.updateSettings({ theme: setTheme.value });
+    });
+  }
   $('setFolderDisplay').textContent = s.downloadFolder || '— not set —';
   $('setConcurrency').value = s.concurrency || 1;
   $('setSpeedLimit').value = s.speedLimit || '';
@@ -1801,15 +1828,6 @@ if (musicLyricsBtn) musicLyricsBtn.addEventListener('click', async () => {
     await loadLyrics(musicTitle.textContent, musicArtist.textContent);
   }
 });
-
-// Reset lyrics on new track
-const _origPlayFile = playFile;
-async function playWithLyricsReset(filepath, title, entry) {
-  lyricsData = null;
-  if (lyricsShown) lyricsPane.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:20px;">…</div>';
-  await _origPlayFile.call(null, filepath, title, entry);
-  if (lyricsShown) await loadLyrics(musicTitle.textContent, musicArtist.textContent);
-}
 
 // ============ Theme + accent picker ============
 const THEMES = ['dark', 'light'];

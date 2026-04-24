@@ -6,6 +6,27 @@ const https = require('https');
 const net = require('net');
 const YtDlpWrap = require('yt-dlp-wrap').default;
 
+// Guard every IPC handler with a try/catch so a stray throw doesn't
+// break the renderer-side invoke() call.
+const _handleRaw = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = function safeHandle(channel, fn) {
+  return _handleRaw(channel, async (...args) => {
+    try { return await fn(...args); }
+    catch (err) {
+      console.error(`[ipc] ${channel} failed:`, err);
+      return { ok: false, error: err.message || String(err) };
+    }
+  });
+};
+
+// Catch stray promise rejections in the main process so they don't crash it.
+process.on('unhandledRejection', (reason) => {
+  console.error('[main] unhandled rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[main] uncaught exception:', err);
+});
+
 const ytDlpWrap = new YtDlpWrap();
 let selectedDownloadFolder = null;
 let currentDownload = null;         // kept for backwards compatibility — refers to most recent active download
@@ -1338,10 +1359,14 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
     send('download-status', playlist ? 'Fetching playlist info…' : 'Fetching video info…');
   }
 
-  // Disk space warning (< 500 MB free)
+  // Disk space warning (< 500 MB free). Also clear activeDownloads +
+  // pump queue so we don't leave the UI stuck in "Starting…".
   const freeGB = diskFreeGB(selectedDownloadFolder);
   if (freeGB != null && freeGB < 0.5) {
     send('download-error', `Only ${freeGB.toFixed(1)} GB free in download folder`);
+    activeDownloads.delete(downloadId);
+    broadcastQueue();
+    pumpDownloads();
     return;
   }
 
