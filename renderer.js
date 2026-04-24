@@ -22,6 +22,7 @@ const state = {
   settings: {},
   history: [],
   sessionStarted: false,
+  libFilter: 'all',
 };
 
 // ============ Mode controller ============
@@ -839,7 +840,37 @@ document.addEventListener('DOMContentLoaded', () => {
     sessionStorage.setItem('dismissedPartialBanner', '1');
     const b = $('libPartialBanner'); if (b) b.style.display = 'none';
   });
+  // Library filter chips
+  const chips = document.querySelectorAll('#libFilters .lib-chip');
+  chips.forEach((chip) => {
+    chip.addEventListener('click', () => {
+      chips.forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+      state.libFilter = chip.dataset.filter || 'all';
+      renderLibrary();
+    });
+  });
 });
+
+const AUDIO_FMTS = new Set(['mp3', 'm4a', 'aac', 'flac', 'wav', 'ogg', 'opus', 'wma']);
+const VIDEO_FMTS = new Set(['mp4', 'mkv', 'mov', 'avi', 'webm']);
+function entryKind(e) {
+  const fmt = (e.format || (e.filepath || '').split('.').pop() || '').toLowerCase();
+  if (AUDIO_FMTS.has(fmt)) return 'audio';
+  if (VIDEO_FMTS.has(fmt)) return 'video';
+  return 'other';
+}
+function applyLibFilter(enriched, filter) {
+  switch (filter) {
+    case 'ondisk':  return enriched.filter((e) => e._exists);
+    case 'missing': return enriched.filter((e) => !e._exists);
+    case 'audio':   return enriched.filter((e) => entryKind(e) === 'audio');
+    case 'video':   return enriched.filter((e) => entryKind(e) === 'video');
+    case 'history': return enriched; // show everything including imports + missing
+    case 'all':
+    default:        return enriched;
+  }
+}
 
 async function renderLibrary() {
   refreshPartialBanner();
@@ -858,13 +889,16 @@ async function renderLibrary() {
     const [exists, pos] = await Promise.all([api.fileExists(e.filepath), api.getPlayPosition(e.filepath)]);
     return { ...e, _exists: !!exists, _pos: pos };
   }));
-  const filtered = q ? enriched.filter((e) =>
+  const libFilter = state.libFilter || 'all';
+  const byFilter = applyLibFilter(enriched, libFilter);
+  const filtered = q ? byFilter.filter((e) =>
     (e.title || '').toLowerCase().includes(q) ||
     (e.uploader || '').toLowerCase().includes(q) ||
     (e.format || '').toLowerCase().includes(q)
-  ) : enriched;
+  ) : byFilter;
   const onDisk = enriched.filter((e) => e._exists).length;
-  $('libraryStats').textContent = `${onDisk} of ${enriched.length} on disk${q ? ` · showing ${filtered.length}` : ''}`;
+  const filterLabel = libFilter === 'all' ? '' : ` · filter: ${libFilter}`;
+  $('libraryStats').textContent = `${onDisk} of ${enriched.length} on disk${filterLabel}${q ? ` · showing ${filtered.length}` : (libFilter !== 'all' ? ` · ${filtered.length} match` : '')}`;
   const container = $('libraryContainer');
   if (filtered.length === 0) {
     container.innerHTML = `<div class="lib-empty">
