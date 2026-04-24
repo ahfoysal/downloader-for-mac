@@ -667,6 +667,8 @@ api.onQueueState((data) => {
   // Throttle DOM re-renders to once per animation frame
   scheduleQueueRender();
   const total = data.active.length + data.queued.length;
+  // Dock badge: show total downloads in flight (macOS only; no-op on Win/Linux).
+  try { api.setDockBadge(total > 0 ? String(total) : ''); } catch (_) {}
   // >1 parallel → queue view
   if (total > 1) {
     setMode('queue');
