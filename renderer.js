@@ -108,12 +108,19 @@ function renderQuickSites() {
   el.querySelectorAll('[data-url]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const url = btn.dataset.url;
-      setView('browse');
-      setTimeout(() => {
-        // Navigate the active BrowserView tab instead of creating a new one
-        if (browseTabsState.length) api.browseNavigate(null, url);
-        else api.browseCreateTab(url);
-      }, 60);
+      if (typeof openNewTab === 'function') {
+        setView('browse');
+        // Open in new tab if any exist, else first visit creates tab from initBrowse
+        setTimeout(() => {
+          if (browseTabs.length && browseTabs[activeTabIdx]) {
+            browseTabs[activeTabIdx].webview.loadURL(url);
+          } else {
+            openNewTab(url);
+          }
+        }, 50);
+      } else {
+        setView('browse');
+      }
     });
   });
 }
@@ -194,9 +201,9 @@ async function renderBrowseHistoryLanding() {
       if (!url) return;
       setView('browse');
       setTimeout(() => {
-        if (browseTabsState.length) api.browseNavigate(null, url);
-        else api.browseCreateTab(url);
-      }, 60);
+        if (browseTabs.length && browseTabs[activeTabIdx]) browseTabs[activeTabIdx].webview.loadURL(url);
+        else openNewTab(url);
+      }, 50);
     });
   });
 }
@@ -1639,44 +1646,7 @@ function renderTabs() {
 api.onBrowseTabs((tabs) => {
   browseTabsState = tabs || [];
   renderTabs();
-  // Update FAB based on active tab's URL
-  const active = tabs.find((t) => t.active);
-  const sendBtn = $('browseSend');
-  const fabBadge = $('fabBadge');
-  if (sendBtn) {
-    if (active && SUPPORTED_SITES_RE.test(active.url || '')) {
-      sendBtn.classList.add('show');
-      sendBtn.dataset.url = active.url;
-      if (fabBadge) {
-        try { const h = new URL(active.url).hostname.replace(/^www\./, '').split('.')[0]; fabBadge.textContent = h.charAt(0).toUpperCase() + h.slice(1); } catch (_) {}
-      }
-      // Warm the probe cache in the background
-      if (typeof schedulePrefetchGlobal === 'function') schedulePrefetchGlobal(active.url);
-    } else {
-      sendBtn.classList.remove('show');
-    }
-  }
 });
-
-// Global prefetch helper used by onBrowseTabs (no access to initBrowse-scoped state)
-let _globalPrefetchTimer = null;
-let _globalLastPrefetchUrl = null;
-function schedulePrefetchGlobal(url) {
-  if (!url || !isVideoWatchUrl(url)) return;
-  if (probeCache.has(url) || url === _globalLastPrefetchUrl) return;
-  clearTimeout(_globalPrefetchTimer);
-  _globalPrefetchTimer = setTimeout(async () => {
-    const disk = await api.probeCacheGet(url);
-    if (disk) { probeCache.set(url, disk); return; }
-    _globalLastPrefetchUrl = url;
-    const res = await api.probeFast(url);
-    if (res && res.ok) {
-      probeCache.set(url, res);
-      api.probeCacheSet(url, res);
-      setTimeout(() => { probeCache.delete(url); if (_globalLastPrefetchUrl === url) _globalLastPrefetchUrl = null; }, 120 * 1000);
-    }
-  }, 400);
-}
 
 function openNewTab(url) { api.browseCreateTab(url || 'https://www.google.com'); }
 function closeActiveTab() {
@@ -1936,8 +1906,7 @@ async function initBrowse() {
   }
   urlBar.addEventListener('keydown', (e) => { if (e.key === 'Enter') navigate(); });
   sendBtn.addEventListener('click', async () => {
-    let u = sendBtn.dataset.url;
-    if (!u) { try { u = await api.browseCurrentUrl(); } catch (_) {} }
+    const u = sendBtn.dataset.url || webview.getURL();
     if (!u) return;
     openFabSheet(u);
   });
@@ -1965,20 +1934,6 @@ function chipsHtml(presets) {
 }
 
 async function getLiveWebviewInfo() {
-  // Old webview API is gone — use BrowserView current tab info instead.
-  try {
-    const active = (browseTabsState || []).find((t) => t.active);
-    if (!active) return { title: null, thumbnail: null };
-    const url = active.url || '';
-    // Derive YouTube thumbnail from video ID in the URL
-    let thumb = null;
-    const yt = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/) || url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
-    if (yt) thumb = 'https://i.ytimg.com/vi/' + yt[1] + '/maxresdefault.jpg';
-    return { title: active.title || url, thumbnail: thumb, uploader: null };
-  } catch (_) { return { title: null, thumbnail: null }; }
-}
-
-async function _deadCode_getLiveWebviewInfo() {
   const webview = $('browseView');
   if (!webview) return { title: null, thumbnail: null };
   try {
