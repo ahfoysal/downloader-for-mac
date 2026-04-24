@@ -19,9 +19,11 @@ jobs:
       - name: Fetch binaries (yt-dlp + ffmpeg)
         run: node scripts/fetch-binaries.js
       - name: Build mac (arm64)
-        run: npm run dist:mac
+        run: npx electron-builder --mac --arm64 -p never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          USE_HARD_LINKS: 'false'
+          ELECTRON_BUILDER_DISABLE_MIRROR: 'true'
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -52,7 +54,10 @@ jobs:
           Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-extract
           Get-ChildItem -Path ffmpeg-extract -Recurse -Filter ffmpeg.exe | Select-Object -First 1 | ForEach-Object { Copy-Item $_.FullName bin/ffmpeg.exe }
       - name: Build Windows
-        run: npm run dist
+        run: npx electron-builder --win --x64 -p never
+        env:
+          USE_HARD_LINKS: 'false'
+          ELECTRON_BUILDER_DISABLE_MIRROR: 'true'
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
