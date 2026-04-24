@@ -1601,7 +1601,13 @@ function reportBrowseBounds() {
   const body = $('browseBody');
   if (!body) return;
   const r = body.getBoundingClientRect();
-  api.browseSetBounds({ x: r.left, y: r.top, width: r.width, height: r.height });
+  // BrowserView renders above the DOM, so we must leave bottom space for
+  // anything the user needs to click on (FAB, mini-player).
+  let reserveBottom = 0;
+  const sendBtn = $('browseSend');
+  if (sendBtn && sendBtn.classList.contains('show')) reserveBottom += 80;
+  if (document.body.classList.contains('mini-active')) reserveBottom += 64;
+  api.browseSetBounds({ x: r.left, y: r.top, width: r.width, height: Math.max(0, r.height - reserveBottom) });
 }
 window.addEventListener('resize', reportBrowseBounds);
 // Poll every 500ms in case layout shifts due to mini-player / sidebar toggles
@@ -1644,17 +1650,19 @@ api.onBrowseTabs((tabs) => {
   const sendBtn = $('browseSend');
   const fabBadge = $('fabBadge');
   if (sendBtn) {
+    const wasShown = sendBtn.classList.contains('show');
     if (active && SUPPORTED_SITES_RE.test(active.url || '')) {
       sendBtn.classList.add('show');
       sendBtn.dataset.url = active.url;
       if (fabBadge) {
         try { const h = new URL(active.url).hostname.replace(/^www\./, '').split('.')[0]; fabBadge.textContent = h.charAt(0).toUpperCase() + h.slice(1); } catch (_) {}
       }
-      // Warm the probe cache in the background
       if (typeof schedulePrefetchGlobal === 'function') schedulePrefetchGlobal(active.url);
     } else {
       sendBtn.classList.remove('show');
     }
+    // Re-report bounds if FAB visibility changed — shrink/grow BrowserView accordingly
+    if (wasShown !== sendBtn.classList.contains('show')) reportBrowseBounds();
   }
 });
 
