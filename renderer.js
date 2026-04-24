@@ -61,11 +61,23 @@ function forceSizeWebviews() {
   body.querySelectorAll('webview').forEach((wv) => {
     wv.style.width = bodyW + 'px';
     wv.style.height = bodyH + 'px';
+    // Force Chromium to recompute viewport: toggle width by 1px then restore.
+    // This is the canonical workaround for the <webview> static-viewport bug
+    // where internal render size gets stuck at element's initial dimensions.
+    setTimeout(() => {
+      try {
+        wv.style.width = (bodyW - 1) + 'px';
+        requestAnimationFrame(() => { wv.style.width = bodyW + 'px'; });
+      } catch (_) {}
+    }, 0);
   });
 }
+// Run on window resize AND any mutation within the view hierarchy
 window.addEventListener('resize', () => {
   if (state.view === 'browse') forceSizeWebviews();
 });
+// Ensure initial size is set once DOM paints
+requestAnimationFrame(() => setTimeout(() => { if (state.view === 'browse' || !state.view) forceSizeWebviews(); }, 200));
 
 function setMode(name) {
   state.mode = name;
