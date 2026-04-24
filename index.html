@@ -936,15 +936,20 @@
       margin-left: 4px;
     }
     .browse-new-tab:hover { background: var(--surface-2); color: var(--text); }
-    /* Webviews stack absolutely-positioned inside .browse-body so they
-       always fill the container. display:block keeps them rendering;
-       visibility swap hides inactive ones without unmounting. */
+    /* Webviews sized in absolute viewport units — bypass all flex quirks.
+       130px = nav 52 + tabs 36 + bar 42. display:block is required for
+       webview to actually render; visibility swap hides inactive tabs
+       without unmounting (so pages keep loading in the background). */
     .browse-body webview {
-      display: block;
-      position: absolute;
-      inset: 0;
+      display: block !important;
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
       width: 100% !important;
       height: 100% !important;
+      min-height: calc(100vh - 130px) !important;
       visibility: hidden;
       z-index: 0;
     }
@@ -984,6 +989,8 @@
       overflow: hidden;
       flex: 1;
       position: relative;
+      height: calc(100vh - 52px);
+      min-height: calc(100vh - 52px);
     }
     .view[data-view="browse"].active { display: block; }
     .browse-tabs {
@@ -1001,9 +1008,11 @@
     .browse-body {
       background: var(--bg);
       position: absolute;
-      left: 0; right: 0;
+      left: 0;
+      right: 0;
       top: 78px;
       bottom: 0;
+      height: calc(100vh - 130px);
       overflow: hidden;
     }
 
@@ -1416,7 +1425,7 @@
 
     /* ============ Music player view ============ */
     .music-view {
-      display: none;
+      display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;

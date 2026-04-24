@@ -40,7 +40,6 @@ function setView(name) {
   }
   if (name === 'browse') {
     initBrowse();
-    // Refresh URL bar to current webview URL (B6 fix)
     const webview = $('browseView');
     const urlBar = $('browseUrl');
     if (webview && urlBar) {
@@ -49,8 +48,24 @@ function setView(name) {
         if (current) urlBar.value = current;
       } catch (_) {}
     }
+    // Force-size webviews — belt & suspenders against CSS flex quirks
+    setTimeout(forceSizeWebviews, 30);
   }
 }
+
+function forceSizeWebviews() {
+  const body = $('browseBody');
+  if (!body) return;
+  const bodyH = body.clientHeight;
+  const bodyW = body.clientWidth;
+  body.querySelectorAll('webview').forEach((wv) => {
+    wv.style.width = bodyW + 'px';
+    wv.style.height = bodyH + 'px';
+  });
+}
+window.addEventListener('resize', () => {
+  if (state.view === 'browse') forceSizeWebviews();
+});
 
 function setMode(name) {
   state.mode = name;
