@@ -974,6 +974,71 @@ ipcMain.handle('set-dock-badge', (_e, text) => {
   } catch (err) { return { ok: false, error: err.message }; }
 });
 
+// Export/import library (history + play positions + play counts + channel subs).
+// Exposes a portable JSON snapshot the user can back up or move to another machine.
+ipcMain.handle('export-library', async () => {
+  const res = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export library',
+    defaultPath: `downloader-library-${new Date().toISOString().slice(0, 10)}.json`,
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (res.canceled || !res.filePath) return { ok: false, canceled: true };
+  const payload = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    appVersion: app.getVersion(),
+    history: loadHistory(),
+    playPositions: appSettings.playPositions || {},
+    playCounts: appSettings.playCounts || {},
+    channels: appSettings.channels || [],
+    siteDefaults: appSettings.siteDefaults || {},
+    browseHistory: appSettings.browseHistory || [],
+  };
+  try {
+    fs.writeFileSync(res.filePath, JSON.stringify(payload, null, 2), 'utf8');
+    return { ok: true, path: res.filePath, count: payload.history.length };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('import-library', async (_e, { mode } = {}) => {
+  const res = await dialog.showOpenDialog(mainWindow, {
+    title: 'Import library',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+    properties: ['openFile'],
+  });
+  if (res.canceled || !res.filePaths[0]) return { ok: false, canceled: true };
+  let data;
+  try { data = JSON.parse(fs.readFileSync(res.filePaths[0], 'utf8')); }
+  catch (err) { return { ok: false, error: 'Invalid JSON: ' + err.message }; }
+  if (!data || typeof data !== 'object') return { ok: false, error: 'Malformed export file' };
+
+  const existing = loadHistory();
+  const existingByUrl = new Map(existing.map((e) => [e.url || e.filepath, e]));
+  const incoming = Array.isArray(data.history) ? data.history : [];
+  let merged = existing;
+  let added = 0;
+  if (mode === 'replace') {
+    merged = incoming;
+    added = incoming.length;
+  } else {
+    for (const entry of incoming) {
+      const k = entry.url || entry.filepath;
+      if (k && !existingByUrl.has(k)) { merged.unshift(entry); added++; }
+    }
+  }
+  saveHistory(merged);
+  // Merge play positions / counts / channels / siteDefaults (never overwrite existing)
+  appSettings.playPositions = { ...(data.playPositions || {}), ...(appSettings.playPositions || {}) };
+  appSettings.playCounts = { ...(data.playCounts || {}), ...(appSettings.playCounts || {}) };
+  appSettings.siteDefaults = { ...(data.siteDefaults || {}), ...(appSettings.siteDefaults || {}) };
+  if (Array.isArray(data.channels)) {
+    const seen = new Set((appSettings.channels || []).map((c) => c.url));
+    for (const ch of data.channels) { if (ch.url && !seen.has(ch.url)) { (appSettings.channels = appSettings.channels || []).push(ch); seen.add(ch.url); } }
+  }
+  saveSettings();
+  return { ok: true, added, total: merged.length };
+});
+
 // Metadata editor: read existing tags. MP3 via node-id3 (synchronous),
 // M4A / other audio via ffprobe (ffmpeg -i stderr parse).
 ipcMain.handle('read-metadata', (_e, filepath) => {

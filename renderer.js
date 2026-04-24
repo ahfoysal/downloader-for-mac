@@ -840,6 +840,19 @@ document.addEventListener('DOMContentLoaded', () => {
     sessionStorage.setItem('dismissedPartialBanner', '1');
     const b = $('libPartialBanner'); if (b) b.style.display = 'none';
   });
+  const exportBtn = $('libExportBtn');
+  const importBtn = $('libImportBtn');
+  if (exportBtn) exportBtn.addEventListener('click', async () => {
+    const res = await api.exportLibrary();
+    if (res && res.ok) toast(`Exported ${res.count} entries`, 'success');
+    else if (res && !res.canceled) toast('Export failed: ' + (res.error || 'unknown'), 'error');
+  });
+  if (importBtn) importBtn.addEventListener('click', async () => {
+    const replace = confirm('Import library:\n\n[OK] Merge — keep current entries, add new ones from file\n[Cancel] Replace — overwrite current library with file contents\n\n(Play positions / play counts are always merged.)');
+    const res = await api.importLibrary(replace ? 'merge' : 'replace');
+    if (res && res.ok) { toast(`Imported ${res.added} new entries (${res.total} total)`, 'success'); renderLibrary(); }
+    else if (res && !res.canceled) toast('Import failed: ' + (res.error || 'unknown'), 'error');
+  });
   // Library filter chips
   const chips = document.querySelectorAll('#libFilters .lib-chip');
   chips.forEach((chip) => {

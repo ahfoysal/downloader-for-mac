@@ -49,6 +49,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   detectPartialDownloads: () => ipcRenderer.invoke('detect-partial-downloads'),
   clearPartialDownloads: () => ipcRenderer.invoke('clear-partial-downloads'),
   setDockBadge: (text) => ipcRenderer.invoke('set-dock-badge', text),
+  exportLibrary: () => ipcRenderer.invoke('export-library'),
+  importLibrary: (mode) => ipcRenderer.invoke('import-library', { mode }),
   listChannels: () => ipcRenderer.invoke('list-channels'),
   addChannel: (payload) => ipcRenderer.invoke('add-channel', payload),
   removeChannel: (id) => ipcRenderer.invoke('remove-channel', id),
