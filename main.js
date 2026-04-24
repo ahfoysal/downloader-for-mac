@@ -92,9 +92,7 @@ function createBrowserTab(url = 'https://www.google.com') {
       sandbox: true,
     },
   });
-  // NOTE: do NOT use setAutoResize — on macOS it can capture input
-  // outside the explicit setBounds rectangle. We call applyActiveBounds
-  // manually on window resize instead.
+  view.setAutoResize({ width: true, height: true });
   try { view.webContents.setUserAgent(BROWSE_UA); } catch (_) {}
 
   const wc = view.webContents;
