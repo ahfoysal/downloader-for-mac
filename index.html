@@ -2547,6 +2547,12 @@
     <!-- ===== Library view ===== -->
     <div class="view" data-view="library">
       <div class="view-inner" style="max-width:1000px;">
+        <div class="lib-partial-banner" id="libPartialBanner" style="display:none;margin:0 0 14px 0;padding:12px 14px;border-radius:10px;background:rgba(61,218,215,0.08);border:1px solid rgba(61,218,215,0.3);display:none;align-items:center;gap:12px;font-size:13px;">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;opacity:0.8;"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>
+          <div style="flex:1;" id="libPartialText">—</div>
+          <button class="secondary-btn" id="libPartialClear" style="padding:6px 12px;font-size:12px;">Clear partials</button>
+          <button class="secondary-btn" id="libPartialDismiss" style="padding:6px 10px;font-size:12px;opacity:0.7;">Dismiss</button>
+        </div>
         <div class="lib-head">
           <h2>Library</h2>
           <input type="text" class="lib-search-input" id="librarySearch" placeholder="Search…" spellcheck="false" />

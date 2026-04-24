@@ -810,7 +810,37 @@ window.addEventListener('drop', async (e) => {
   if (imported) renderLibrary();
 });
 
+async function refreshPartialBanner() {
+  const banner = $('libPartialBanner');
+  const text = $('libPartialText');
+  if (!banner || !text) return;
+  if (sessionStorage.getItem('dismissedPartialBanner') === '1') { banner.style.display = 'none'; return; }
+  try {
+    const parts = await api.detectPartialDownloads();
+    if (!Array.isArray(parts) || parts.length === 0) { banner.style.display = 'none'; return; }
+    const totalMB = parts.reduce((s, p) => s + (p.size || 0), 0) / (1024 * 1024);
+    text.textContent = `${parts.length} partial download${parts.length === 1 ? '' : 's'} found (${totalMB.toFixed(1)} MB). These are .part / .ytdl fragments from interrupted downloads — clear them to reclaim space.`;
+    banner.style.display = 'flex';
+  } catch (_) { banner.style.display = 'none'; }
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const clearBtn = $('libPartialClear');
+  const dismissBtn = $('libPartialDismiss');
+  if (clearBtn) clearBtn.addEventListener('click', async () => {
+    const res = await api.clearPartialDownloads();
+    if (res && typeof res.removed === 'number') {
+      toast(`Cleared ${res.removed} partial file${res.removed === 1 ? '' : 's'}`, 'success');
+    }
+    refreshPartialBanner();
+  });
+  if (dismissBtn) dismissBtn.addEventListener('click', () => {
+    sessionStorage.setItem('dismissedPartialBanner', '1');
+    const b = $('libPartialBanner'); if (b) b.style.display = 'none';
+  });
+});
+
 async function renderLibrary() {
+  refreshPartialBanner();
   // First, auto-heal: scan download folder for orphan files and add them to history
   try { await api.reconcileLibrary(); } catch (_) {}
   let entries = await api.getHistory();
