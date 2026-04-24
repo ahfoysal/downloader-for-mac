@@ -808,6 +808,9 @@ async function playFile(filepath, title, entry) {
   await loadResumePosition(playerVideo, filepath);
   try { await playerVideo.play(); api.incrementPlayCount(filepath); } catch (_) {}
 
+  // Dynamic backdrop color from album art
+  if (thumbUrl) applyBackdropColor(thumbUrl);
+
   // Reset lyrics for the new track. If the pane is open, reload after we have duration.
   lyricsData = null;
   if (lyricsShown) {
@@ -1841,6 +1844,121 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && $('fabSheetBackdrop').classList.contains('show')) closeFabSheet();
 });
 
+// ============ Album-art color extraction for dynamic player backdrop ============
+function extractDominantColor(imgUrl) {
+  return new Promise((resolve) => {
+    if (!imgUrl) return resolve(null);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = 24; c.height = 24;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0, 24, 24);
+        const data = ctx.getImageData(0, 0, 24, 24).data;
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          // Skip very dark or very bright pixels (edges / blacks / whites)
+          const br = (data[i] + data[i+1] + data[i+2]) / 3;
+          if (br < 40 || br > 220) continue;
+          r += data[i]; g += data[i+1]; b += data[i+2]; n++;
+        }
+        if (!n) return resolve(null);
+        r = Math.round(r / n); g = Math.round(g / n); b = Math.round(b / n);
+        resolve({ r, g, b });
+      } catch (_) { resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = imgUrl;
+  });
+}
+async function applyBackdropColor(thumbUrl) {
+  const col = await extractDominantColor(thumbUrl);
+  const playerEl = $('player');
+  if (!playerEl) return;
+  if (col) {
+    const { r, g, b } = col;
+    playerEl.style.background = `
+      radial-gradient(circle at 20% 20%, rgba(${r},${g},${b},0.22), transparent 60%),
+      radial-gradient(circle at 85% 80%, rgba(0,0,0,0.5), transparent 60%),
+      rgba(10,10,12,0.98)
+    `;
+  } else {
+    playerEl.style.background = '';
+  }
+}
+
+// ============ Sleep timer ============
+let sleepTimerMs = 0;
+let sleepTimerStart = 0;
+let sleepFadeRaf = 0;
+function startSleepTimer(minutes) {
+  stopSleepTimer();
+  if (!minutes) return;
+  sleepTimerMs = minutes * 60 * 1000;
+  sleepTimerStart = Date.now();
+  toast(`Sleep timer: ${minutes} min`, 'success');
+  // Schedule the fade + pause
+  const fadeStartMs = sleepTimerMs - 10000; // last 10s fade
+  setTimeout(beginSleepFade, fadeStartMs);
+}
+function beginSleepFade() {
+  const start = Date.now();
+  const startVol = playerVideo.volume;
+  function tick() {
+    const t = (Date.now() - start) / 10000;
+    if (t >= 1) { playerVideo.pause(); playerVideo.volume = startVol; toast('Sleep timer done', 'info'); return; }
+    playerVideo.volume = startVol * (1 - t);
+    sleepFadeRaf = requestAnimationFrame(tick);
+  }
+  tick();
+}
+function stopSleepTimer() {
+  sleepTimerMs = 0;
+  cancelAnimationFrame(sleepFadeRaf);
+}
+
+// ============ Audio equalizer (WebAudio biquad bank) ============
+let eqBands = null;
+const EQ_FREQS = [60, 150, 400, 1000, 2400, 6000, 12000, 16000];
+const EQ_PRESETS = {
+  'Flat':      [0, 0, 0, 0, 0, 0, 0, 0],
+  'Bass boost':[6, 4, 2, 0, 0, 0, 0, 0],
+  'Vocal':     [-2, 0, 2, 4, 4, 2, 0, 0],
+  'Rock':      [3, 2, -1, -2, 0, 2, 3, 3],
+  'Classical': [2, 2, 0, -1, -1, 0, 2, 3],
+  'Jazz':      [2, 1, 0, 1, 1, 2, 1, 1],
+};
+function ensureEQ() {
+  if (eqBands || !audioCtx || !sourceNode || !analyser) return;
+  try {
+    // Rewire: source → bands → analyser → destination
+    sourceNode.disconnect();
+    analyser.disconnect();
+    const bands = EQ_FREQS.map((f, i) => {
+      const b = audioCtx.createBiquadFilter();
+      b.type = i === 0 ? 'lowshelf' : i === EQ_FREQS.length - 1 ? 'highshelf' : 'peaking';
+      b.frequency.value = f;
+      b.Q.value = 1;
+      b.gain.value = 0;
+      return b;
+    });
+    sourceNode.connect(bands[0]);
+    for (let i = 0; i < bands.length - 1; i++) bands[i].connect(bands[i + 1]);
+    bands[bands.length - 1].connect(analyser);
+    analyser.connect(audioCtx.destination);
+    eqBands = bands;
+  } catch (_) {}
+}
+function applyEQPreset(name) {
+  if (!eqBands) ensureEQ();
+  if (!eqBands) return;
+  const values = EQ_PRESETS[name] || EQ_PRESETS.Flat;
+  eqBands.forEach((b, i) => { b.gain.value = values[i] || 0; });
+  api.updateSettings({ eqPreset: name });
+}
+
 // ============ Audio visualizer (WebAudio analyzer) ============
 let audioCtx = null;
 let analyser = null;
@@ -2102,6 +2220,16 @@ function buildCommands() {
     { label: 'Play / Pause', sub: 'Space', icon: '▶', run: () => { if (currentPlaying) musicPlayBtn.click(); } },
     { label: 'Toggle shuffle', icon: '⇄', run: () => musicShuffleBtn && musicShuffleBtn.click() },
     { label: 'Toggle lyrics', icon: '♪', run: () => musicLyricsBtn && musicLyricsBtn.click() },
+    { label: 'Sleep timer: 15 min', icon: '☾', run: () => startSleepTimer(15) },
+    { label: 'Sleep timer: 30 min', icon: '☾', run: () => startSleepTimer(30) },
+    { label: 'Sleep timer: 60 min', icon: '☾', run: () => startSleepTimer(60) },
+    { label: 'Sleep timer: 90 min', icon: '☾', run: () => startSleepTimer(90) },
+    { label: 'Sleep timer off', icon: '☾', run: () => { stopSleepTimer(); toast('Sleep timer off', 'info'); } },
+    ...Object.keys(EQ_PRESETS).map((name) => ({
+      label: 'EQ: ' + name,
+      icon: '≡',
+      run: () => { applyEQPreset(name); toast('EQ: ' + name, 'info'); },
+    })),
   ];
 }
 
