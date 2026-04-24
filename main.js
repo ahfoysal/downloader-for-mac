@@ -335,10 +335,16 @@ app.whenReady().then(() => {
     wc.on('context-menu', (e, params) => {
       const { linkURL, pageURL, srcURL, selectionText } = params;
       const template = [];
-      if (linkURL) template.push({
-        label: 'Send link to Downloader',
-        click: () => mainWindow.webContents.send('deep-link-url', linkURL),
-      });
+      if (linkURL) {
+        template.push({
+          label: 'Open link in new tab',
+          click: () => mainWindow.webContents.send('open-url-new-tab', linkURL),
+        });
+        template.push({
+          label: 'Send link to Downloader',
+          click: () => mainWindow.webContents.send('deep-link-url', linkURL),
+        });
+      }
       if (srcURL) template.push({
         label: 'Send media to Downloader',
         click: () => mainWindow.webContents.send('deep-link-url', srcURL),
@@ -366,9 +372,9 @@ app.whenReady().then(() => {
       });
       Menu.buildFromTemplate(template).popup({ window: mainWindow });
     });
-    // Handle new-window requests (target=_blank links) by loading in same view
+    // target=_blank links open as new browser tabs inside our app
     wc.setWindowOpenHandler(({ url }) => {
-      wc.loadURL(url);
+      mainWindow.webContents.send('open-url-new-tab', url);
       return { action: 'deny' };
     });
   });

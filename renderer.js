@@ -62,8 +62,8 @@ function setMode(name) {
 
 // ============ Landing page: quick sites + recent library ============
 const QUICK_SITES = [
-  { name: 'YouTube',   url: 'https://www.youtube.com',   color: '#FF0033', letter: 'Y' },
   { name: 'Google',    url: 'https://www.google.com',    color: '#4285F4', letter: 'G' },
+  { name: 'YouTube',   url: 'https://www.youtube.com',   color: '#FF0033', letter: 'Y' },
   { name: 'Vimeo',     url: 'https://vimeo.com',         color: '#19B7EA', letter: 'V' },
   { name: 'Twitter',   url: 'https://twitter.com',       color: '#1DA1F2', letter: '𝕏' },
   { name: 'TikTok',    url: 'https://www.tiktok.com',    color: '#000000', letter: 'T' },
@@ -1483,6 +1483,12 @@ api.onDeepLink((url) => {
   analyzeUrl(url);
   toast('URL received', 'info');
 });
+
+// Context-menu / target=_blank → open in a new browser tab
+api.onOpenUrlNewTab((url) => {
+  setView('browse');
+  setTimeout(() => openNewTab(url), 30);
+});
 api.onWatchFolderUrls((urls) => {
   toast(`${urls.length} URLs queued from watch folder`, 'success');
   setView('download');
@@ -1602,11 +1608,15 @@ function renderTabs() {
   });
 }
 
+const BROWSE_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const BROWSE_HOME = 'https://www.google.com';
+
 function createWebview(url) {
   const wv = document.createElement('webview');
-  wv.setAttribute('src', url || 'https://www.youtube.com');
+  wv.setAttribute('src', url || BROWSE_HOME);
   wv.setAttribute('partition', 'persist:browse');
   wv.setAttribute('allowpopups', '');
+  wv.setAttribute('useragent', BROWSE_UA);
   wv.style.width = '100%';
   wv.style.height = '100%';
   wv.dataset.tab = String(tabSeq);
@@ -1660,8 +1670,8 @@ function switchToTab(idx) {
 }
 
 function openNewTab(url) {
-  const wv = createWebview(url || 'https://www.youtube.com');
-  browseTabs.push({ id: ++tabSeq, url: url || 'https://www.youtube.com', title: 'New tab', webview: wv });
+  const wv = createWebview(url || BROWSE_HOME);
+  browseTabs.push({ id: ++tabSeq, url: url || BROWSE_HOME, title: 'New tab', webview: wv });
   switchToTab(browseTabs.length - 1);
 }
 
@@ -1687,7 +1697,7 @@ async function restoreTabs() {
   const firstWv = document.querySelector('webview#browseView');
   if (!firstWv) return;
   if (saved.length === 0) {
-    browseTabs.push({ id: ++tabSeq, url: 'https://www.youtube.com', title: 'YouTube', webview: firstWv });
+    browseTabs.push({ id: ++tabSeq, url: BROWSE_HOME, title: 'YouTube', webview: firstWv });
     firstWv.classList.add('active');
   } else {
     firstWv.setAttribute('src', saved[0]);

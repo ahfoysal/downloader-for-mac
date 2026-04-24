@@ -937,8 +937,10 @@
     }
     .browse-new-tab:hover { background: var(--surface-2); color: var(--text); }
     /* Webviews stack absolutely-positioned inside .browse-body so they
-       always fill the container regardless of flex-height quirks. */
+       always fill the container. display:block keeps them rendering;
+       visibility swap hides inactive ones without unmounting. */
     .browse-body webview {
+      display: block;
       position: absolute;
       inset: 0;
       width: 100% !important;
@@ -2490,7 +2492,7 @@
       </div>
       <div class="browse-body" id="browseBody">
         <!-- Webviews are injected dynamically per tab -->
-        <webview id="browseView" src="https://www.youtube.com" style="width:100%;height:100%;" partition="persist:browse" allowpopups data-tab="0"></webview>
+        <webview id="browseView" src="https://www.google.com" style="width:100%;height:100%;" partition="persist:browse" allowpopups useragent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" data-tab="0"></webview>
         <button class="browse-fab" id="browseSend" title="Download this video">
           <svg class="ico fab-icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span>Download video</span>
