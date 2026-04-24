@@ -1321,6 +1321,157 @@ function describeFormat(f) {
   return parts.join(' · ');
 }
 
+// ============ Browser tabs manager ============
+const browseTabs = [];  // [{ id, url, title, webview }]
+let activeTabIdx = 0;
+let tabSeq = 0;
+
+function tabsBar() { return $('browseTabs'); }
+function newTabBtn() { return $('browseNewTab'); }
+function browseBody() { return $('browseBody'); }
+
+function renderTabs() {
+  const bar = tabsBar();
+  if (!bar) return;
+  const plus = newTabBtn();
+  // Remove all existing .browse-tab children and rebuild
+  [...bar.querySelectorAll('.browse-tab')].forEach((t) => t.remove());
+  browseTabs.forEach((t, i) => {
+    const el = document.createElement('button');
+    el.className = 'browse-tab' + (i === activeTabIdx ? ' active' : '');
+    el.dataset.idx = i;
+    const fav = (() => {
+      try { const h = new URL(t.url || '').hostname; return h.replace(/^www\./, '').charAt(0).toUpperCase(); }
+      catch (_) { return '•'; }
+    })();
+    el.innerHTML = `<span class="b-tab-favicon">${fav}</span>
+      <span class="b-tab-title">${(t.title || t.url || 'Loading…').replace(/</g, '&lt;')}</span>
+      <span class="b-tab-close" data-close="${i}">×</span>`;
+    el.addEventListener('click', (ev) => {
+      if (ev.target.closest('[data-close]')) return;
+      switchToTab(i);
+    });
+    const closeBtn = el.querySelector('[data-close]');
+    if (closeBtn) closeBtn.addEventListener('click', (ev) => { ev.stopPropagation(); closeTab(i); });
+    bar.insertBefore(el, plus);
+  });
+}
+
+function createWebview(url) {
+  const wv = document.createElement('webview');
+  wv.setAttribute('src', url || 'https://www.youtube.com');
+  wv.setAttribute('partition', 'persist:browse');
+  wv.setAttribute('allowpopups', '');
+  wv.style.width = '100%';
+  wv.style.height = '100%';
+  wv.dataset.tab = String(tabSeq);
+  // Wire events on the new webview
+  wv.addEventListener('did-navigate', (e) => { updateTabFromWebview(wv, e.url); });
+  wv.addEventListener('did-navigate-in-page', (e) => { updateTabFromWebview(wv, e.url); });
+  wv.addEventListener('page-title-updated', (e) => {
+    const t = browseTabs.find((bt) => bt.webview === wv);
+    if (t) { t.title = e.title || t.title; renderTabs(); }
+  });
+  wv.addEventListener('dom-ready', () => {
+    try { updateTabFromWebview(wv, wv.getURL()); } catch (_) {}
+  });
+  wv.addEventListener('did-finish-load', () => {
+    try { updateTabFromWebview(wv, wv.getURL()); } catch (_) {}
+  });
+  browseBody().appendChild(wv);
+  return wv;
+}
+
+function updateTabFromWebview(wv, url) {
+  const t = browseTabs.find((bt) => bt.webview === wv);
+  if (!t) return;
+  t.url = url || t.url;
+  // Refresh FAB only for the ACTIVE tab
+  if (browseTabs[activeTabIdx] && browseTabs[activeTabIdx].webview === wv) {
+    $('browseUrl').value = t.url;
+    if (typeof updateSendBtn === 'function') updateSendBtn(t.url);
+  }
+  renderTabs();
+  persistTabs();
+}
+
+function switchToTab(idx) {
+  if (idx < 0 || idx >= browseTabs.length) return;
+  activeTabIdx = idx;
+  browseTabs.forEach((t, i) => {
+    if (t.webview) t.webview.classList.toggle('active', i === idx);
+  });
+  const t = browseTabs[idx];
+  if (t) {
+    try { $('browseUrl').value = t.webview.getURL() || t.url; } catch (_) { $('browseUrl').value = t.url; }
+    if (typeof updateSendBtn === 'function') updateSendBtn($('browseUrl').value);
+  }
+  renderTabs();
+  persistTabs();
+}
+
+function openNewTab(url) {
+  const wv = createWebview(url || 'https://www.youtube.com');
+  browseTabs.push({ id: ++tabSeq, url: url || 'https://www.youtube.com', title: 'New tab', webview: wv });
+  switchToTab(browseTabs.length - 1);
+}
+
+function closeTab(idx) {
+  const t = browseTabs[idx];
+  if (!t) return;
+  if (t.webview && t.webview.parentNode) t.webview.parentNode.removeChild(t.webview);
+  browseTabs.splice(idx, 1);
+  if (browseTabs.length === 0) { openNewTab(); return; }
+  if (activeTabIdx >= browseTabs.length) activeTabIdx = browseTabs.length - 1;
+  switchToTab(activeTabIdx);
+}
+
+function persistTabs() {
+  const urls = browseTabs.map((t) => t.url).filter(Boolean);
+  api.updateSettings({ browseTabs: urls, browseActiveTab: activeTabIdx });
+}
+
+async function restoreTabs() {
+  const s = await api.getSettings();
+  const saved = (s && s.browseTabs) || [];
+  // Claim the initial #browseView as the first tab
+  const firstWv = document.querySelector('webview#browseView');
+  if (!firstWv) return;
+  if (saved.length === 0) {
+    browseTabs.push({ id: ++tabSeq, url: 'https://www.youtube.com', title: 'YouTube', webview: firstWv });
+    firstWv.classList.add('active');
+  } else {
+    firstWv.setAttribute('src', saved[0]);
+    browseTabs.push({ id: ++tabSeq, url: saved[0], title: 'Tab', webview: firstWv });
+    firstWv.classList.add('active');
+    // Wire the initial webview's events (same as createWebview)
+    firstWv.addEventListener('did-navigate', (e) => updateTabFromWebview(firstWv, e.url));
+    firstWv.addEventListener('did-navigate-in-page', (e) => updateTabFromWebview(firstWv, e.url));
+    firstWv.addEventListener('page-title-updated', (e) => {
+      const t = browseTabs.find((bt) => bt.webview === firstWv);
+      if (t) { t.title = e.title || t.title; renderTabs(); }
+    });
+    for (let i = 1; i < saved.length; i++) {
+      const wv = createWebview(saved[i]);
+      browseTabs.push({ id: ++tabSeq, url: saved[i], title: 'Tab', webview: wv });
+    }
+    activeTabIdx = Math.min((s.browseActiveTab || 0), browseTabs.length - 1);
+    browseTabs.forEach((t, i) => t.webview.classList.toggle('active', i === activeTabIdx));
+  }
+  renderTabs();
+}
+
+// Wire new-tab + keyboard shortcut
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = newTabBtn();
+  if (btn) btn.addEventListener('click', () => openNewTab());
+});
+// Also wire after renderer init (since DOMContentLoaded may have already fired)
+setTimeout(() => {
+  const btn = newTabBtn();
+  if (btn && !btn.dataset.bound) { btn.dataset.bound = '1'; btn.addEventListener('click', () => openNewTab()); }
+}, 50);
+
 // ============ Browse tab (built-in browser with webview) ============
 const SUPPORTED_SITES_RE = /(youtube\.com|youtu\.be|vimeo\.com|twitter\.com|x\.com|tiktok\.com|soundcloud\.com|twitch\.tv|dailymotion\.com|bilibili\.com|facebook\.com|instagram\.com)/i;
 
@@ -1344,8 +1495,9 @@ function isVideoWatchUrl(u) {
     return true;
   } catch (_) { return false; }
 }
-function initBrowse() {
-  const webview = $('browseView');
+async function initBrowse() {
+  if (!browseTabs.length) await restoreTabs();
+  const webview = (browseTabs[activeTabIdx] && browseTabs[activeTabIdx].webview) || $('browseView');
   const urlBar = $('browseUrl');
   const sendBtn = $('browseSend');
   if (webview.dataset.init) return;
@@ -1413,9 +1565,10 @@ function initBrowse() {
     if (e.errorCode && e.errorCode !== -3) toast(`Load failed: ${e.errorDescription}`, 'error');
   });
 
-  $('browseBack').addEventListener('click', () => { if (webview.canGoBack()) webview.goBack(); });
-  $('browseForward').addEventListener('click', () => { if (webview.canGoForward()) webview.goForward(); });
-  $('browseReload').addEventListener('click', () => webview.reload());
+  function activeWv() { return (browseTabs[activeTabIdx] && browseTabs[activeTabIdx].webview) || webview; }
+  $('browseBack').addEventListener('click', () => { const w = activeWv(); if (w.canGoBack()) w.goBack(); });
+  $('browseForward').addEventListener('click', () => { const w = activeWv(); if (w.canGoForward()) w.goForward(); });
+  $('browseReload').addEventListener('click', () => activeWv().reload());
   function navigate() {
     let u = urlBar.value.trim();
     if (!u) return;
@@ -1423,7 +1576,7 @@ function initBrowse() {
       if (/^[\w-]+(\.[\w-]+)+/.test(u)) u = 'https://' + u;
       else u = 'https://www.google.com/search?q=' + encodeURIComponent(u);
     }
-    webview.loadURL(u);
+    activeWv().loadURL(u);
   }
   $('browseGo').addEventListener('click', navigate);
   const browseImport = $('browseImport');
@@ -2057,6 +2210,10 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault(); openCmdk();
   } else if (e.key === '?' && !inField) {
     e.preventDefault(); openHelp();
+  } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 't' && state.view === 'browse') {
+    e.preventDefault(); openNewTab();
+  } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'w' && state.view === 'browse') {
+    e.preventDefault(); closeTab(activeTabIdx);
   }
 });
 

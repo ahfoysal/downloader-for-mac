@@ -691,6 +691,60 @@
     .btn-lg { padding: 14px 22px; font-size: 14px; }
     .btn-full { width: 100%; }
 
+    /* ============ Browser tabs ============ */
+    .browse-tabs {
+      display: flex;
+      gap: 2px;
+      padding: 6px 8px 0;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+      height: 36px;
+      align-items: stretch;
+    }
+    .browse-tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 10px;
+      min-width: 140px;
+      max-width: 220px;
+      border-radius: 6px 6px 0 0;
+      background: transparent;
+      cursor: pointer;
+      border: none;
+      color: var(--text-muted);
+      font-size: 11.5px;
+      transition: background 0.1s;
+      position: relative;
+    }
+    .browse-tab:hover { background: var(--surface-2); color: var(--text); }
+    .browse-tab.active { background: var(--surface-2); color: var(--text); border-bottom: 2px solid var(--accent); margin-bottom: -1px; }
+    .browse-tab .b-tab-favicon {
+      width: 14px; height: 14px; flex-shrink: 0; border-radius: 2px; background: var(--surface-3);
+      display: flex; align-items: center; justify-content: center; font-size: 9px;
+    }
+    .browse-tab .b-tab-title {
+      flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      padding-right: 2px;
+    }
+    .browse-tab .b-tab-close {
+      width: 16px; height: 16px; border: none; background: transparent; color: var(--text-muted);
+      border-radius: 4px; cursor: pointer; font-size: 11px; line-height: 1;
+      display: none; align-items: center; justify-content: center;
+    }
+    .browse-tab:hover .b-tab-close { display: flex; }
+    .browse-tab .b-tab-close:hover { background: var(--border); color: var(--danger); }
+    .browse-new-tab {
+      width: 30px; height: 28px; align-self: center;
+      background: transparent; border: none; color: var(--text-muted);
+      border-radius: 6px; cursor: pointer; font-size: 16px;
+      margin-left: 4px;
+    }
+    .browse-new-tab:hover { background: var(--surface-2); color: var(--text); }
+    webview { display: none; }
+    webview.active { display: block; }
+
     /* ============ Browse view ============ */
     .browse-bar {
       height: 42px;
@@ -2103,8 +2157,12 @@
       </div>
     </div>
 
-    <!-- ===== Browse view (built-in browser) ===== -->
+    <!-- ===== Browse view (built-in browser with tabs) ===== -->
     <div class="view" data-view="browse" style="padding:0;">
+      <div class="browse-tabs" id="browseTabs">
+        <!-- tabs injected here -->
+        <button class="browse-new-tab" id="browseNewTab" title="New tab (⌘T)">+</button>
+      </div>
       <div class="browse-bar">
         <button class="nav-icon-btn" id="browseBack" title="Back">
           <svg class="ico" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
@@ -2122,8 +2180,9 @@
           Import Chrome
         </button>
       </div>
-      <div class="browse-body">
-        <webview id="browseView" src="https://www.youtube.com" style="width:100%;height:100%;" partition="persist:browse" allowpopups></webview>
+      <div class="browse-body" id="browseBody">
+        <!-- Webviews are injected dynamically per tab -->
+        <webview id="browseView" src="https://www.youtube.com" style="width:100%;height:100%;" partition="persist:browse" allowpopups data-tab="0"></webview>
         <button class="browse-fab" id="browseSend" title="Download this video">
           <svg class="ico fab-icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span>Download video</span>
