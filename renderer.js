@@ -1601,11 +1601,10 @@ function reportBrowseBounds() {
   const body = $('browseBody');
   if (!body) return;
   const r = body.getBoundingClientRect();
-  // BrowserView renders above the DOM, so we must leave bottom space for
-  // anything the user needs to click on (FAB, mini-player).
-  let reserveBottom = 0;
-  const sendBtn = $('browseSend');
-  if (sendBtn && sendBtn.classList.contains('show')) reserveBottom += 80;
+  // BrowserView renders above the DOM. Always reserve 90px at the bottom
+  // when on Browse view so FAB/mini-player pointer events never get
+  // swallowed by the native view layer.
+  let reserveBottom = 90;
   if (document.body.classList.contains('mini-active')) reserveBottom += 64;
   api.browseSetBounds({ x: r.left, y: r.top, width: r.width, height: Math.max(0, r.height - reserveBottom) });
 }
@@ -1946,10 +1945,13 @@ async function initBrowse() {
   }
   urlBar.addEventListener('keydown', (e) => { if (e.key === 'Enter') navigate(); });
   sendBtn.addEventListener('click', async () => {
+    console.log('[FAB] clicked, dataset.url=', sendBtn.dataset.url);
     let u = sendBtn.dataset.url;
-    if (!u) { try { u = await api.browseCurrentUrl(); } catch (_) {} }
-    if (!u) return;
-    openFabSheet(u);
+    if (!u) {
+      try { u = await api.browseCurrentUrl(); console.log('[FAB] got current url=', u); } catch (e) { console.error('[FAB] browseCurrentUrl failed', e); }
+    }
+    if (!u) { console.warn('[FAB] no URL available'); return; }
+    try { openFabSheet(u); } catch (e) { console.error('[FAB] openFabSheet threw', e); }
   });
 }
 
