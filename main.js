@@ -1,5 +1,5 @@
 // main.js
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Notification, powerSaveBlocker } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -1847,6 +1847,21 @@ async function startOneDownload(event, downloadId, { url, format, playlist, subt
       count: completed.length,
       history: entries,
     });
+    // Native macOS notification on completion
+    try {
+      if (Notification.isSupported()) {
+        const n = new Notification({
+          title: completed.length > 1 ? `${completed.length} files downloaded` : 'Download complete',
+          body: meta.title || (completed[0] ? path.basename(completed[0]) : ''),
+          silent: false,
+        });
+        n.on('click', () => {
+          if (mainWindow) { mainWindow.show(); mainWindow.focus(); }
+          if (completed[0]) shell.showItemInFolder(completed[0]);
+        });
+        n.show();
+      }
+    } catch (_) {}
     broadcastToExtensions({ type: 'complete', count: completed.length });
     currentDownload = null;
     activeDownloads.delete(downloadId);

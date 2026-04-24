@@ -877,6 +877,10 @@ playerVideo.addEventListener('play', () => {
   musicPlayIcon.innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
   musicView.classList.add('playing');
 });
+playerVideo.addEventListener('dblclick', () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (playerVideo.requestFullscreen) playerVideo.requestFullscreen().catch(() => {});
+});
 playerVideo.addEventListener('pause', () => {
   musicPlayIcon.innerHTML = '<polygon points="6 4 20 12 6 20 6 4"/>';
   musicView.classList.remove('playing');
@@ -2220,6 +2224,15 @@ function buildCommands() {
     { label: 'Play / Pause', sub: 'Space', icon: '▶', run: () => { if (currentPlaying) musicPlayBtn.click(); } },
     { label: 'Toggle shuffle', icon: '⇄', run: () => musicShuffleBtn && musicShuffleBtn.click() },
     { label: 'Toggle lyrics', icon: '♪', run: () => musicLyricsBtn && musicLyricsBtn.click() },
+    { label: 'Fullscreen video', icon: '⛶', run: () => {
+      if (playerVideo && playerVideo.requestFullscreen) playerVideo.requestFullscreen().catch(() => {});
+    }},
+    { label: 'Picture-in-Picture', icon: '▭', run: async () => {
+      try {
+        if (document.pictureInPictureElement) await document.exitPictureInPicture();
+        else if (playerVideo && playerVideo.requestPictureInPicture) await playerVideo.requestPictureInPicture();
+      } catch (e) { toast('PiP unavailable: ' + e.message, 'error'); }
+    }},
     { label: 'Sleep timer: 15 min', icon: '☾', run: () => startSleepTimer(15) },
     { label: 'Sleep timer: 30 min', icon: '☾', run: () => startSleepTimer(30) },
     { label: 'Sleep timer: 60 min', icon: '☾', run: () => startSleepTimer(60) },
