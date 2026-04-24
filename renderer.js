@@ -53,6 +53,42 @@ function setView(name) {
   }
 }
 
+// Aggressive compositor rebind for a single webview — the reliable fix for
+// the YouTube/Chromium "render surface stuck at initial tiny size" bug.
+function recomposeWebview(wv) {
+  if (!wv) return;
+  const body = $('browseBody');
+  if (!body) return;
+  const w = body.clientWidth;
+  const h = body.clientHeight;
+  try {
+    // 1) Aggressive CSS width pulse — triggers Chromium viewport query
+    wv.style.width = (w - 1) + 'px';
+    wv.style.height = (h - 1) + 'px';
+    requestAnimationFrame(() => {
+      wv.style.width = w + 'px';
+      wv.style.height = h + 'px';
+    });
+    // 2) Dispatch resize event inside the guest page after a tick
+    setTimeout(() => {
+      try {
+        if (wv.getWebContentsId && wv.getWebContentsId() >= 0) {
+          wv.executeJavaScript('window.dispatchEvent(new Event("resize"))').catch(() => {});
+        }
+      } catch (_) {}
+    }, 100);
+    // 3) Micro-zoom toggle — forces compositor rebuild
+    setTimeout(() => {
+      try {
+        if (wv.setZoomFactor && wv.getWebContentsId && wv.getWebContentsId() >= 0) {
+          wv.setZoomFactor(0.999);
+          setTimeout(() => { try { wv.setZoomFactor(1.0); } catch (_) {} }, 50);
+        }
+      } catch (_) {}
+    }, 150);
+  } catch (_) {}
+}
+
 function forceSizeWebviews() {
   const body = $('browseBody');
   if (!body) return;
@@ -61,23 +97,38 @@ function forceSizeWebviews() {
   body.querySelectorAll('webview').forEach((wv) => {
     wv.style.width = bodyW + 'px';
     wv.style.height = bodyH + 'px';
-    // Force Chromium to recompute viewport: toggle width by 1px then restore.
-    // This is the canonical workaround for the <webview> static-viewport bug
-    // where internal render size gets stuck at element's initial dimensions.
+    // (1) 1-pixel CSS width toggle — triggers element-level resize event
     setTimeout(() => {
       try {
         wv.style.width = (bodyW - 1) + 'px';
         requestAnimationFrame(() => { wv.style.width = bodyW + 'px'; });
       } catch (_) {}
     }, 0);
+    // (2) Dispatch a synthetic resize event inside the guest page — this
+    // is the fix that reliably works for YouTube's cutoff issue: their
+    // player listens to window.resize and reflows when the event fires.
+    try {
+      if (wv.executeJavaScript && wv.getWebContentsId && wv.getWebContentsId() >= 0) {
+        wv.executeJavaScript('window.dispatchEvent(new Event("resize"))').catch(() => {});
+      }
+    } catch (_) {}
+    // (3) Zoom-factor micro-toggle — forces Chromium compositor to re-layout
+    try {
+      if (wv.setZoomFactor && wv.getWebContentsId && wv.getWebContentsId() >= 0) {
+        wv.setZoomFactor(0.999);
+        setTimeout(() => { try { wv.setZoomFactor(1.0); } catch (_) {} }, 60);
+      }
+    } catch (_) {}
   });
 }
-// Run on window resize AND any mutation within the view hierarchy
+// Run on window resize
 window.addEventListener('resize', () => {
   if (state.view === 'browse') forceSizeWebviews();
 });
 // Ensure initial size is set once DOM paints
 requestAnimationFrame(() => setTimeout(() => { if (state.view === 'browse' || !state.view) forceSizeWebviews(); }, 200));
+// Run every 1s while on Browse — catches SPA navigations inside YouTube
+setInterval(() => { if (state.view === 'browse') forceSizeWebviews(); }, 1000);
 
 function setMode(name) {
   state.mode = name;
@@ -1845,8 +1896,13 @@ async function initBrowse() {
     const u = webview.getURL();
     urlBar.value = u;
     updateSendBtn(u);
+    // Recompose trick: after the page finishes loading, briefly swap the
+    // webview's width (triggers Chromium to re-query viewport) + dispatch
+    // a resize event inside the guest page. Fixes YouTube's render-at-
+    // initial-size-only cutoff bug.
+    setTimeout(() => recomposeWebview(webview), 50);
   });
-  webview.addEventListener('page-title-updated', () => { /* optional: show in status */ });
+  webview.addEventListener('page-title-updated', () => { /* optional */ });
   webview.addEventListener('did-fail-load', (e) => {
     if (e.errorCode && e.errorCode !== -3) toast(`Load failed: ${e.errorDescription}`, 'error');
   });
