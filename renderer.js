@@ -1216,6 +1216,12 @@ musicNext.addEventListener('click', () => {
   }
 });
 playerVideo.addEventListener('ended', () => {
+  if (sleepEndOfTrack) {
+    playerVideo.pause();
+    toast('Sleep: track ended', 'info');
+    stopSleepTimer();
+    return;
+  }
   if (playerIdx >= 0 && playerIdx < playlistForPlayer.length - 1) musicNext.click();
 });
 playerVideo.addEventListener('play', () => {
@@ -2356,6 +2362,9 @@ async function applyBackdropColor(thumbUrl) {
 let sleepTimerMs = 0;
 let sleepTimerStart = 0;
 let sleepFadeRaf = 0;
+let sleepFadeTimeout = 0;
+let sleepCountdownInterval = 0;
+let sleepEndOfTrack = false;
 function startSleepTimer(minutes) {
   stopSleepTimer();
   if (!minutes) return;
@@ -2364,14 +2373,28 @@ function startSleepTimer(minutes) {
   toast(`Sleep timer: ${minutes} min`, 'success');
   // Schedule the fade + pause
   const fadeStartMs = sleepTimerMs - 10000; // last 10s fade
-  setTimeout(beginSleepFade, fadeStartMs);
+  sleepFadeTimeout = setTimeout(beginSleepFade, fadeStartMs);
+  sleepCountdownInterval = setInterval(updateSleepBadge, 1000);
+  updateSleepBadge();
+}
+function startSleepEndOfTrack() {
+  stopSleepTimer();
+  sleepEndOfTrack = true;
+  toast('Sleep: stop at end of track', 'success');
+  updateSleepBadge();
 }
 function beginSleepFade() {
   const start = Date.now();
   const startVol = playerVideo.volume;
   function tick() {
     const t = (Date.now() - start) / 10000;
-    if (t >= 1) { playerVideo.pause(); playerVideo.volume = startVol; toast('Sleep timer done', 'info'); return; }
+    if (t >= 1) {
+      playerVideo.pause();
+      playerVideo.volume = startVol;
+      toast('Sleep timer done', 'info');
+      stopSleepTimer();
+      return;
+    }
     playerVideo.volume = startVol * (1 - t);
     sleepFadeRaf = requestAnimationFrame(tick);
   }
@@ -2379,7 +2402,25 @@ function beginSleepFade() {
 }
 function stopSleepTimer() {
   sleepTimerMs = 0;
+  sleepTimerStart = 0;
+  sleepEndOfTrack = false;
   cancelAnimationFrame(sleepFadeRaf);
+  clearTimeout(sleepFadeTimeout);
+  clearInterval(sleepCountdownInterval);
+  sleepCountdownInterval = 0;
+  updateSleepBadge();
+}
+function updateSleepBadge() {
+  const badge = document.getElementById('sleepBadge');
+  if (!badge) return;
+  if (sleepEndOfTrack) { badge.textContent = '☾ end of track'; badge.style.display = 'inline-flex'; return; }
+  if (!sleepTimerMs || !sleepTimerStart) { badge.style.display = 'none'; badge.textContent = ''; return; }
+  const remain = sleepTimerMs - (Date.now() - sleepTimerStart);
+  if (remain <= 0) { badge.style.display = 'none'; return; }
+  const mm = Math.floor(remain / 60000);
+  const ss = Math.floor((remain % 60000) / 1000).toString().padStart(2, '0');
+  badge.textContent = `☾ ${mm}:${ss}`;
+  badge.style.display = 'inline-flex';
 }
 
 // ============ Audio equalizer (WebAudio biquad bank) ============
@@ -2698,6 +2739,7 @@ function buildCommands() {
     { label: 'Sleep timer: 30 min', icon: '☾', run: () => startSleepTimer(30) },
     { label: 'Sleep timer: 60 min', icon: '☾', run: () => startSleepTimer(60) },
     { label: 'Sleep timer: 90 min', icon: '☾', run: () => startSleepTimer(90) },
+    { label: 'Sleep: end of track', icon: '☾', run: () => startSleepEndOfTrack() },
     { label: 'Sleep timer off', icon: '☾', run: () => { stopSleepTimer(); toast('Sleep timer off', 'info'); } },
     ...Object.keys(EQ_PRESETS).map((name) => ({
       label: 'EQ: ' + name,
