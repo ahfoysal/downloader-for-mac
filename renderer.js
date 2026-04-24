@@ -1194,7 +1194,16 @@ function thumbHtml(entry, cls = 'pq-thumb') {
 function renderQueueList() {
   const list = $('playerQueue');
   if (!list) return;
-  if (playlistForPlayer.length <= 1) { list.innerHTML = ''; return; }
+  // If we don't have an explicit playback queue, show the library as default
+  // up-next so the panel is never empty.
+  if (playlistForPlayer.length === 0 && state.history && state.history.length) {
+    playlistForPlayer = state.history.filter((e) => e.filepath);
+    playerIdx = -1;
+  }
+  if (playlistForPlayer.length === 0) {
+    list.innerHTML = '<div class="player-queue-head">Up next</div><div style="color:var(--text-muted);font-size:12px;padding:20px 0;">Nothing in library yet.</div>';
+    return;
+  }
   const rows = playlistForPlayer.map((e, i) => {
     const title = e.title || 'Untitled';
     const artist = e.uploader || '';
@@ -1205,14 +1214,42 @@ function renderQueueList() {
       <div class="pq-artist">${artist.replace(/</g, '&lt;')}</div>
     </div>`;
   }).join('');
-  list.innerHTML = `<div class="player-queue-head">Up next · ${playlistForPlayer.length} items</div>` + rows;
+  list.innerHTML = `<div class="player-queue-head">Up next · ${playlistForPlayer.length} items — drag to reorder</div>` + rows;
   list.querySelectorAll('.pq-item').forEach((el) => {
-    el.addEventListener('click', () => {
+    el.setAttribute('draggable', 'true');
+    el.addEventListener('click', (ev) => {
+      if (el.dataset.dragging === '1') return;
       const i = parseInt(el.dataset.idx);
       const entry = playlistForPlayer[i];
       if (!entry) return;
       playerIdx = i;
       playFile(entry.filepath, entry.title, entry);
+    });
+    el.addEventListener('dragstart', (ev) => {
+      el.dataset.dragging = '1';
+      el.style.opacity = '0.4';
+      ev.dataTransfer.effectAllowed = 'move';
+      try { ev.dataTransfer.setData('text/plain', el.dataset.idx); } catch (_) {}
+    });
+    el.addEventListener('dragend', () => {
+      el.style.opacity = '';
+      setTimeout(() => { el.dataset.dragging = '0'; }, 50);
+    });
+    el.addEventListener('dragover', (ev) => {
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+    });
+    el.addEventListener('drop', (ev) => {
+      ev.preventDefault();
+      const fromIdx = parseInt(ev.dataTransfer.getData('text/plain'));
+      const toIdx = parseInt(el.dataset.idx);
+      if (isNaN(fromIdx) || isNaN(toIdx) || fromIdx === toIdx) return;
+      const currentlyPlayingEntry = playlistForPlayer[playerIdx];
+      const [moved] = playlistForPlayer.splice(fromIdx, 1);
+      playlistForPlayer.splice(toIdx, 0, moved);
+      // Recompute playerIdx to still point at the same playing track
+      playerIdx = playlistForPlayer.findIndex((p) => p === currentlyPlayingEntry);
+      renderQueueList();
     });
   });
 }
@@ -1615,16 +1652,18 @@ async function restoreTabs() {
   renderTabs();
 }
 
-// Wire new-tab + keyboard shortcut
-document.addEventListener('DOMContentLoaded', () => {
+// Wire new-tab button once (DOMContentLoaded may or may not have fired yet)
+function wireNewTabButton() {
   const btn = newTabBtn();
-  if (btn) btn.addEventListener('click', () => openNewTab());
-});
-// Also wire after renderer init (since DOMContentLoaded may have already fired)
-setTimeout(() => {
-  const btn = newTabBtn();
-  if (btn && !btn.dataset.bound) { btn.dataset.bound = '1'; btn.addEventListener('click', () => openNewTab()); }
-}, 50);
+  if (!btn || btn.dataset.bound === '1') return;
+  btn.dataset.bound = '1';
+  btn.addEventListener('click', () => openNewTab());
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', wireNewTabButton);
+} else {
+  wireNewTabButton();
+}
 
 // ============ Browse tab (built-in browser with webview) ============
 const SUPPORTED_SITES_RE = /(youtube\.com|youtu\.be|vimeo\.com|twitter\.com|x\.com|tiktok\.com|soundcloud\.com|twitch\.tv|dailymotion\.com|bilibili\.com|facebook\.com|instagram\.com)/i;

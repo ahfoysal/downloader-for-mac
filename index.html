@@ -1937,13 +1937,30 @@
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
     }
 
-    /* Up-next queue in expanded player */
+    /* Up-next queue — permanent right-hand column of expanded player */
+    .player-body {
+      flex-direction: row !important;
+      align-items: stretch;
+      gap: 32px;
+      padding: 20px 28px 100px !important;
+    }
+    .music-view {
+      flex: 1;
+      max-width: 560px;
+    }
     .player-queue {
-      margin-top: 22px;
-      max-height: 240px;
+      flex: 0 0 340px;
+      max-width: 340px;
       overflow-y: auto;
-      width: 100%;
-      max-width: 460px;
+      align-self: stretch;
+      border-left: 1px solid var(--border);
+      padding-left: 22px;
+      padding-top: 10px;
+      max-height: none;
+    }
+    @media (max-width: 900px) {
+      .player-body { flex-direction: column !important; }
+      .player-queue { flex: none; max-width: none; width: 100%; border-left: none; border-top: 1px solid var(--border); padding-left: 0; padding-top: 14px; max-height: 240px; }
     }
     .player-queue-head {
       font-size: 10.5px;
