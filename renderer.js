@@ -1274,6 +1274,23 @@ musicSpeedBtn.addEventListener('click', () => {
   musicSpeedBtn.textContent = SPEEDS[speedIdx] + '×';
 });
 
+// Fullscreen + Picture-in-Picture buttons
+const musicPipBtn = $('musicPipBtn');
+const musicFullBtn = $('musicFullBtn');
+if (musicPipBtn) musicPipBtn.addEventListener('click', async () => {
+  try {
+    if (document.pictureInPictureElement) await document.exitPictureInPicture();
+    else if (playerVideo && playerVideo.requestPictureInPicture) await playerVideo.requestPictureInPicture();
+    musicPipBtn.classList.toggle('active', !!document.pictureInPictureElement);
+  } catch (e) { toast('PiP unavailable: ' + e.message, 'error'); }
+});
+if (musicFullBtn) musicFullBtn.addEventListener('click', () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (playerVideo && playerVideo.requestFullscreen) playerVideo.requestFullscreen().catch(() => {});
+});
+playerVideo.addEventListener('enterpictureinpicture', () => musicPipBtn && musicPipBtn.classList.add('active'));
+playerVideo.addEventListener('leavepictureinpicture', () => musicPipBtn && musicPipBtn.classList.remove('active'));
+
 function closePlayer() {
   if (currentPlaying && playerVideo.duration) api.savePlayPosition(currentPlaying, playerVideo.currentTime, playerVideo.duration);
   playerVideo.pause();
