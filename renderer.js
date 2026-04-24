@@ -33,6 +33,11 @@ function setView(name) {
   document.body.classList.toggle('view-library', name === 'library');
   document.body.classList.toggle('view-download', name === 'download');
   if (name === 'library') renderLibrary();
+  if (name === 'download') {
+    renderRecentLanding();
+    renderMostPlayedLanding();
+    renderBrowseHistoryLanding();
+  }
   if (name === 'browse') {
     initBrowse();
     // Refresh URL bar to current webview URL (B6 fix)
@@ -54,6 +59,144 @@ function setMode(name) {
   const effective = totalQueue > 1 && (name === 'downloading' || name === 'idle') ? 'queue' : name;
   qsa('.mode').forEach((m) => m.classList.toggle('active', m.dataset.mode === effective));
 }
+
+// ============ Landing page: quick sites + recent library ============
+const QUICK_SITES = [
+  { name: 'YouTube',   url: 'https://www.youtube.com',   color: '#FF0033', letter: 'Y' },
+  { name: 'Google',    url: 'https://www.google.com',    color: '#4285F4', letter: 'G' },
+  { name: 'Vimeo',     url: 'https://vimeo.com',         color: '#19B7EA', letter: 'V' },
+  { name: 'Twitter',   url: 'https://twitter.com',       color: '#1DA1F2', letter: '𝕏' },
+  { name: 'TikTok',    url: 'https://www.tiktok.com',    color: '#000000', letter: 'T' },
+  { name: 'Facebook',  url: 'https://www.facebook.com',  color: '#1877F2', letter: 'f' },
+  { name: 'Instagram', url: 'https://www.instagram.com', color: '#E4405F', letter: 'I' },
+  { name: 'Twitch',    url: 'https://www.twitch.tv',     color: '#9146FF', letter: 't' },
+  { name: 'Reddit',    url: 'https://www.reddit.com',    color: '#FF4500', letter: 'r' },
+  { name: 'SoundCloud',url: 'https://soundcloud.com',    color: '#FF5500', letter: 'S' },
+];
+
+function renderQuickSites() {
+  const el = $('quickSites');
+  if (!el) return;
+  el.innerHTML = QUICK_SITES.map((s) =>
+    `<div class="quick-site" data-url="${s.url}">
+      <div class="qs-icon" style="background:${s.color}">${s.letter}</div>
+      <div class="qs-name">${s.name}</div>
+    </div>`
+  ).join('');
+  el.querySelectorAll('[data-url]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const url = btn.dataset.url;
+      if (typeof openNewTab === 'function') {
+        setView('browse');
+        // Open in new tab if any exist, else first visit creates tab from initBrowse
+        setTimeout(() => {
+          if (browseTabs.length && browseTabs[activeTabIdx]) {
+            browseTabs[activeTabIdx].webview.loadURL(url);
+          } else {
+            openNewTab(url);
+          }
+        }, 50);
+      } else {
+        setView('browse');
+      }
+    });
+  });
+}
+
+function mediaCard(e) {
+  const audio = ['mp3', 'm4a', 'webm', 'flac', 'ogg', 'wav', 'opus', 'aac'].includes((e.format || '').toLowerCase());
+  const icon = audio
+    ? `<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`
+    : `<svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><polygon points="8 5 19 12 8 19 8 5"/></svg>`;
+  const thumb = e.thumbnail
+    ? `<img src="${e.thumbnail}" />`
+    : `<div class="rc-thumb-placeholder">${icon}</div>`;
+  return `<div class="recent-card" data-path="${(e.filepath || '').replace(/"/g, '&quot;')}" data-title="${(e.title || '').replace(/"/g, '&quot;')}">
+    <div class="rc-thumb">${thumb}</div>
+    <div class="rc-title">${(e.title || 'Untitled').replace(/</g, '&lt;')}</div>
+  </div>`;
+}
+
+async function renderRecentLanding() {
+  const section = $('recentSection');
+  const el = $('recentRow');
+  if (!el || !section) return;
+  const entries = (await api.getHistory() || []).filter((e) => e.filepath).slice(0, 10);
+  if (entries.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  el.innerHTML = entries.map(mediaCard).join('');
+  el.querySelectorAll('.recent-card').forEach((card) => {
+    card.addEventListener('click', () => {
+      const path = card.dataset.path;
+      if (path) playFile(path, card.dataset.title);
+    });
+  });
+}
+
+async function renderMostPlayedLanding() {
+  const section = $('mostPlayedSection');
+  const el = $('mostPlayedRow');
+  if (!el || !section) return;
+  const counts = await api.getPlayCounts();
+  const history = await api.getHistory();
+  const byPath = new Map(history.map((h) => [h.filepath, h]));
+  const entries = Object.entries(counts)
+    .map(([fp, c]) => ({ ...(byPath.get(fp) || {}), filepath: fp, plays: c }))
+    .filter((e) => e.filepath)
+    .sort((a, b) => b.plays - a.plays)
+    .slice(0, 10);
+  if (entries.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  el.innerHTML = entries.map((e) => `${mediaCard(e).replace('<div class="rc-title">', `<div class="rc-title" title="${e.plays} plays">${e.plays}× · `)}`).join('');
+  el.querySelectorAll('.recent-card').forEach((card) => {
+    card.addEventListener('click', () => {
+      const path = card.dataset.path;
+      if (path) playFile(path, card.dataset.title);
+    });
+  });
+}
+
+async function renderBrowseHistoryLanding() {
+  const section = $('browseHistorySection');
+  const el = $('browseHistoryRow');
+  if (!el || !section) return;
+  const list = await api.getBrowseHistory();
+  if (!list || list.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  el.innerHTML = list.slice(0, 12).map((h) => {
+    let host = '?'; try { host = new URL(h.url).hostname.replace(/^www\./, ''); } catch (_) {}
+    const letter = (host[0] || '?').toUpperCase();
+    return `<div class="recent-card" data-browse-url="${h.url.replace(/"/g, '&quot;')}">
+      <div class="rc-thumb" style="display:flex;align-items:center;justify-content:center;">
+        <div class="rc-thumb-placeholder" style="font-size:28px;font-weight:800;color:var(--accent);">${letter}</div>
+      </div>
+      <div class="rc-title">${(h.title || host).replace(/</g, '&lt;')}</div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('.recent-card').forEach((card) => {
+    card.addEventListener('click', () => {
+      const url = card.dataset.browseUrl;
+      if (!url) return;
+      setView('browse');
+      setTimeout(() => {
+        if (browseTabs.length && browseTabs[activeTabIdx]) browseTabs[activeTabIdx].webview.loadURL(url);
+        else openNewTab(url);
+      }, 50);
+    });
+  });
+}
+
+// Hook clear button
+document.addEventListener('click', async (e) => {
+  if (e.target && e.target.id === 'clearBrowseHistoryBtn') {
+    await api.clearBrowseHistory();
+    renderBrowseHistoryLanding();
+  }
+});
+
+document.querySelectorAll('[data-goto]').forEach((el) => {
+  el.addEventListener('click', () => setView(el.dataset.goto));
+});
 
 // ============ URL input + auto-analyze ============
 const urlInput = $('urlInput');
@@ -1393,6 +1536,10 @@ function updateTabFromWebview(wv, url) {
   const t = browseTabs.find((bt) => bt.webview === wv);
   if (!t) return;
   t.url = url || t.url;
+  // Record in browser history (debounced via the fact that every nav overwrites)
+  if (url && /^https?:/.test(url) && !/^about:blank/.test(url)) {
+    api.recordBrowseVisit({ url, title: t.title || null });
+  }
   // Refresh FAB only for the ACTIVE tab
   if (browseTabs[activeTabIdx] && browseTabs[activeTabIdx].webview === wv) {
     $('browseUrl').value = t.url;
@@ -2433,6 +2580,10 @@ document.addEventListener('keydown', (e) => {
     tileAudio.classList.toggle('selected', state.selectedTile === 'audio');
   }
   $('extDot').classList.toggle('connected', !!s.extensionInstalled);
+  renderQuickSites();
+  renderRecentLanding();
+  renderMostPlayedLanding();
+  renderBrowseHistoryLanding();
   // Initial queue state
   const q = await api.getQueueState();
   state.queueState = q;

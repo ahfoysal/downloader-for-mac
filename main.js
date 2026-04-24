@@ -113,7 +113,8 @@ let appSettings = {
   sponsorBlock: false,             // remove sponsor segments from YouTube via yt-dlp
   loudnessNormalize: false,         // ffmpeg loudness normalization for audio downloads
   playCounts: {},                   // { [filepath]: count }
-  channels: [],                     // [{ id, url, title, cron, last, format, opts }]
+  channels: [],
+  browseHistory: [],                // [{ url, title, ts }]
 };
 let powerBlockerId = null;
 
@@ -792,6 +793,34 @@ ipcMain.handle('increment-play-count', (_e, filepath) => {
   return cur;
 });
 ipcMain.handle('get-play-counts', () => appSettings.playCounts || {});
+
+// Browser history
+ipcMain.handle('record-browse-visit', (_e, { url, title }) => {
+  if (!url) return [];
+  const list = appSettings.browseHistory || [];
+  // Skip dupes of the immediately-previous URL
+  if (list.length && list[0].url === url) {
+    list[0].title = title || list[0].title;
+    list[0].ts = Date.now();
+  } else {
+    list.unshift({ url, title: title || url, ts: Date.now() });
+  }
+  // Cap at 50 unique URLs
+  const seen = new Set();
+  appSettings.browseHistory = list.filter((h) => {
+    if (seen.has(h.url)) return false;
+    seen.add(h.url);
+    return true;
+  }).slice(0, 50);
+  saveSettings();
+  return appSettings.browseHistory;
+});
+ipcMain.handle('get-browse-history', () => appSettings.browseHistory || []);
+ipcMain.handle('clear-browse-history', () => {
+  appSettings.browseHistory = [];
+  saveSettings();
+  return [];
+});
 
 // Metadata editor: read existing tags. MP3 via node-id3 (synchronous),
 // M4A / other audio via ffprobe (ffmpeg -i stderr parse).
