@@ -55,26 +55,13 @@ function pushTabsState() { sendToRenderer('browse-tabs', browserTabState()); }
 
 function applyActiveBounds() {
   if (!mainWindow) return;
-  const [winW, winH] = mainWindow.getContentSize();
   for (const [id, t] of browserTabs) {
     if (!browseVisible || id !== activeBrowserTab) {
       try { t.view.setBounds({ x: 0, y: 0, width: 0, height: 0 }); } catch (_) {}
     } else {
-      // If renderer reported zero-size bounds (rect not measured yet),
-      // fall back to full-width below the 130px chrome strip.
-      const hasValid = browseBounds && browseBounds.width > 100 && browseBounds.height > 100;
-      const b = hasValid ? browseBounds : { x: 0, y: 130, width: winW, height: winH - 130 };
-      try {
-        t.view.setBounds({
-          x: Math.round(b.x),
-          y: Math.round(b.y),
-          width: Math.max(0, Math.round(b.width)),
-          height: Math.max(0, Math.round(b.height)),
-        });
-      } catch (_) {}
+      try { t.view.setBounds({ x: Math.round(browseBounds.x), y: Math.round(browseBounds.y), width: Math.max(0, Math.round(browseBounds.width)), height: Math.max(0, Math.round(browseBounds.height)) }); } catch (_) {}
     }
   }
-  console.log('[browse] bounds active=', activeBrowserTab, 'visible=', browseVisible, 'bounds=', browseBounds, 'win=', winW, winH);
 }
 
 function ensureAttached(view) {
@@ -549,9 +536,6 @@ app.whenReady().then(() => {
   mainWindow.webContents.once('did-finish-load', () => {
     if (browserTabs.size === 0) createBrowserTab('https://www.google.com');
   });
-
-  // Re-apply bounds on window resize so BrowserView always fills correctly
-  mainWindow.on('resize', () => applyActiveBounds());
 
   // Auto-install native host on first launch (idempotent, silent).
   if (!appSettings.nativeHostInstalled) {
