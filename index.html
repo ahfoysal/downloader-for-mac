@@ -2410,6 +2410,28 @@
     </div>
   </div>
 
+  <!-- ============ Metadata editor ============ -->
+  <div class="modal" id="metaModal">
+    <div class="modal-body" style="width:480px;">
+      <div class="modal-head">
+        <h2>Edit metadata</h2>
+        <p id="metaFilepath" style="font-size:11px;color:var(--text-dim);word-break:break-all;"></p>
+      </div>
+      <div class="modal-content">
+        <div class="setting-row"><label>Title</label><input type="text" id="metaTitle" /></div>
+        <div class="setting-row"><label>Artist</label><input type="text" id="metaArtist" /></div>
+        <div class="setting-row"><label>Album</label><input type="text" id="metaAlbum" /></div>
+        <div class="setting-row"><label>Year</label><input type="text" id="metaYear" /></div>
+        <div class="setting-row"><label>Genre</label><input type="text" id="metaGenre" /></div>
+        <div class="setting-row"><label>Track #</label><input type="text" id="metaTrack" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="metaCancel">Cancel</button>
+        <button class="btn btn-primary" id="metaSave">Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ============ Lyrics pane (in expanded player) ============ -->
   <div class="lyrics-pane" id="lyricsPane"></div>
 

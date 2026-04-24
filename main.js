@@ -5,6 +5,7 @@ const fs = require('fs');
 const https = require('https');
 const net = require('net');
 const YtDlpWrap = require('yt-dlp-wrap').default;
+const NodeID3 = require('node-id3');
 
 // Guard every IPC handler with a try/catch so a stray throw doesn't
 // break the renderer-side invoke() call.
@@ -791,6 +792,80 @@ ipcMain.handle('increment-play-count', (_e, filepath) => {
   return cur;
 });
 ipcMain.handle('get-play-counts', () => appSettings.playCounts || {});
+
+// Metadata editor: read existing tags. MP3 via node-id3 (synchronous),
+// M4A / other audio via ffprobe (ffmpeg -i stderr parse).
+ipcMain.handle('read-metadata', (_e, filepath) => {
+  if (!filepath || !fs.existsSync(filepath)) return { ok: false, error: 'no file' };
+  const ext = path.extname(filepath).toLowerCase();
+  if (ext === '.mp3') {
+    const tags = NodeID3.read(filepath);
+    return {
+      ok: true, type: 'id3',
+      title: tags.title || '',
+      artist: tags.artist || '',
+      album: tags.album || '',
+      year: tags.year || '',
+      genre: tags.genre || '',
+      track: tags.trackNumber || '',
+      hasCover: !!(tags.image && tags.image.imageBuffer),
+    };
+  }
+  // For other formats, read via ffprobe
+  try {
+    const { execFileSync } = require('child_process');
+    const out = execFileSync(ffmpegPath, ['-i', filepath], { stdio: ['ignore', 'pipe', 'pipe'] });
+    return { ok: true, type: 'other', raw: out.toString() };
+  } catch (err) {
+    // ffmpeg -i always exits non-zero when only -i is given; stderr has the info
+    const stderr = (err.stderr || '').toString();
+    const m = (tag) => {
+      const re = new RegExp(`^\\s*${tag}\\s*:\\s*(.+)$`, 'im');
+      const r = stderr.match(re);
+      return r ? r[1].trim() : '';
+    };
+    return {
+      ok: true, type: 'other',
+      title: m('title'),
+      artist: m('artist'),
+      album: m('album'),
+      year: m('date'),
+      genre: m('genre'),
+      track: m('track'),
+    };
+  }
+});
+
+ipcMain.handle('write-metadata', async (_e, { filepath, tags }) => {
+  if (!filepath || !fs.existsSync(filepath)) return { ok: false, error: 'no file' };
+  const ext = path.extname(filepath).toLowerCase();
+  if (ext === '.mp3') {
+    const id3Tags = {
+      title: tags.title || '',
+      artist: tags.artist || '',
+      album: tags.album || '',
+      year: tags.year || '',
+      genre: tags.genre || '',
+      trackNumber: tags.track || '',
+    };
+    const ok = NodeID3.update(id3Tags, filepath);
+    return { ok: !!ok };
+  }
+  // For M4A / other containers: use ffmpeg to rewrite with new metadata.
+  // We write to a temp file then rename to preserve the original path.
+  const { spawnSync } = require('child_process');
+  const tmp = filepath + '.tmp' + ext;
+  const metaArgs = [];
+  const map = { title: 'title', artist: 'artist', album: 'album', year: 'date', genre: 'genre', track: 'track' };
+  Object.entries(map).forEach(([k, ffKey]) => {
+    if (tags[k]) metaArgs.push('-metadata', `${ffKey}=${tags[k]}`);
+  });
+  const args = ['-i', filepath, '-c', 'copy', ...metaArgs, '-y', tmp];
+  const res = spawnSync(ffmpegPath, args, { stdio: 'ignore' });
+  if (res.status !== 0) return { ok: false, error: 'ffmpeg failed' };
+  try { fs.renameSync(tmp, filepath); } catch (err) { return { ok: false, error: err.message }; }
+  return { ok: true };
+});
 
 // Channel subscriptions
 ipcMain.handle('list-channels', () => appSettings.channels || []);

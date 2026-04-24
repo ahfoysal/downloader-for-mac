@@ -70,11 +70,26 @@
       "category": "public.app-category.music",
       "identity": null,
       "extraResources": [
-        { "from": "bin/yt-dlp", "to": "yt-dlp" },
-        { "from": "bin/ffmpeg-arm64", "to": "ffmpeg-arm64" },
-        { "from": "bin/ffmpeg-x64", "to": "ffmpeg-x64" },
-        { "from": "scripts/native-host.js", "to": "scripts/native-host.js" },
-        { "from": "browser-extension", "to": "browser-extension" }
+        {
+          "from": "bin/yt-dlp",
+          "to": "yt-dlp"
+        },
+        {
+          "from": "bin/ffmpeg-arm64",
+          "to": "ffmpeg-arm64"
+        },
+        {
+          "from": "bin/ffmpeg-x64",
+          "to": "ffmpeg-x64"
+        },
+        {
+          "from": "scripts/native-host.js",
+          "to": "scripts/native-host.js"
+        },
+        {
+          "from": "browser-extension",
+          "to": "browser-extension"
+        }
       ]
     },
     "nsis": {
@@ -85,6 +100,7 @@
   },
   "dependencies": {
     "ffmpeg-static": "^5.1.0",
+    "node-id3": "^0.2.9",
     "yt-dlp-wrap": "^2.3.2"
   },
   "devDependencies": {

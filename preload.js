@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearActivityLog: () => ipcRenderer.invoke('clear-activity-log'),
   incrementPlayCount: (filepath) => ipcRenderer.invoke('increment-play-count', filepath),
   getPlayCounts: () => ipcRenderer.invoke('get-play-counts'),
+  readMetadata: (filepath) => ipcRenderer.invoke('read-metadata', filepath),
+  writeMetadata: (filepath, tags) => ipcRenderer.invoke('write-metadata', { filepath, tags }),
   listChannels: () => ipcRenderer.invoke('list-channels'),
   addChannel: (payload) => ipcRenderer.invoke('add-channel', payload),
   removeChannel: (id) => ipcRenderer.invoke('remove-channel', id),

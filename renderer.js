@@ -630,12 +630,90 @@ async function renderLibrary() {
     });
     const playBtn = card.querySelector('[data-play]');
     if (playBtn) playBtn.addEventListener('click', (ev) => { ev.stopPropagation(); go(); });
-    card.addEventListener('contextmenu', (e) => {
+    card.addEventListener('contextmenu', async (e) => {
       e.preventDefault();
-      if (card.dataset.path) api.revealFile(card.dataset.path);
+      if (!card.dataset.path) return;
+      showLibContextMenu(e.clientX, e.clientY, card.dataset.path);
     });
   });
 }
+
+// ============ Library context menu (right-click on card) ============
+function showLibContextMenu(x, y, filepath) {
+  const existing = document.getElementById('libCtxMenu');
+  if (existing) existing.remove();
+  const m = document.createElement('div');
+  m.id = 'libCtxMenu';
+  m.style.cssText = `position:fixed;left:${x}px;top:${y}px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;z-index:900;box-shadow:var(--shadow-md);min-width:180px;`;
+  const items = [
+    { label: 'Play', fn: () => playFile(filepath) },
+    { label: 'Show in Finder', fn: () => api.revealFile(filepath) },
+    { label: 'Copy path', fn: () => navigator.clipboard.writeText(filepath) },
+    { type: 'sep' },
+    { label: 'Edit metadata…', fn: () => openMetadataEditor(filepath) },
+    { type: 'sep' },
+    { label: 'Delete from history', fn: async () => {
+      const match = state.history.find((h) => h.filepath === filepath);
+      if (match) { await api.deleteHistoryEntry(match.id); renderLibrary(); }
+    }},
+  ];
+  m.innerHTML = items.map((it, i) => it.type === 'sep'
+    ? '<div style="height:1px;background:var(--border);margin:4px 0;"></div>'
+    : `<div data-i="${i}" style="padding:7px 12px;border-radius:5px;font-size:12.5px;cursor:pointer;color:var(--text);">${it.label}</div>`
+  ).join('');
+  document.body.appendChild(m);
+  m.querySelectorAll('[data-i]').forEach((el) => {
+    el.addEventListener('mouseenter', () => el.style.background = 'var(--surface-2)');
+    el.addEventListener('mouseleave', () => el.style.background = '');
+    el.addEventListener('click', () => {
+      const i = parseInt(el.dataset.i);
+      const it = items[i];
+      if (it && it.fn) it.fn();
+      m.remove();
+    });
+  });
+  const close = (e) => {
+    if (!m.contains(e.target)) { m.remove(); document.removeEventListener('mousedown', close); }
+  };
+  setTimeout(() => document.addEventListener('mousedown', close), 0);
+}
+
+// ============ Metadata editor ============
+const metaModal = $('metaModal');
+let metaEditingPath = null;
+async function openMetadataEditor(filepath) {
+  metaEditingPath = filepath;
+  $('metaFilepath').textContent = filepath;
+  const meta = await api.readMetadata(filepath);
+  $('metaTitle').value = (meta && meta.title) || '';
+  $('metaArtist').value = (meta && meta.artist) || '';
+  $('metaAlbum').value = (meta && meta.album) || '';
+  $('metaYear').value = (meta && meta.year) || '';
+  $('metaGenre').value = (meta && meta.genre) || '';
+  $('metaTrack').value = (meta && meta.track) || '';
+  metaModal.classList.add('show');
+}
+$('metaCancel') && $('metaCancel').addEventListener('click', () => metaModal.classList.remove('show'));
+metaModal && metaModal.addEventListener('click', (e) => { if (e.target === metaModal) metaModal.classList.remove('show'); });
+$('metaSave') && $('metaSave').addEventListener('click', async () => {
+  if (!metaEditingPath) return;
+  const tags = {
+    title: $('metaTitle').value.trim(),
+    artist: $('metaArtist').value.trim(),
+    album: $('metaAlbum').value.trim(),
+    year: $('metaYear').value.trim(),
+    genre: $('metaGenre').value.trim(),
+    track: $('metaTrack').value.trim(),
+  };
+  const res = await api.writeMetadata(metaEditingPath, tags);
+  if (res && res.ok) {
+    toast('Metadata saved', 'success');
+    metaModal.classList.remove('show');
+    renderLibrary();
+  } else {
+    toast((res && res.error) || 'Save failed', 'error');
+  }
+});
 
 // ============ Player ============
 const player = $('player');
