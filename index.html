@@ -975,23 +975,34 @@
       margin: 0 4px;
     }
     .browse-url:focus { border-color: var(--accent); }
-    /* Browse view — concrete pixel math so flex doesn't eat the webview.
-       Nav 52 + tabs 36 + bar 42 = 130px chrome. */
+    /* Browse view — pinned to the viewport so flex sizing can never
+       collapse the webview. Works because .app is position:relative
+       and gives us a stable reference. */
     .view[data-view="browse"] {
       display: none;
       padding: 0 !important;
       overflow: hidden;
+      flex: 1;
       position: relative;
-      height: 100%;
     }
     .view[data-view="browse"].active { display: block; }
-    .browse-tabs { height: 36px; }
-    .browse-bar { height: 42px; }
+    .browse-tabs {
+      height: 36px;
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      z-index: 2;
+    }
+    .browse-bar {
+      height: 42px;
+      position: absolute;
+      top: 36px; left: 0; right: 0;
+      z-index: 2;
+    }
     .browse-body {
       background: var(--bg);
       position: absolute;
       left: 0; right: 0;
-      top: 78px;   /* tabs + bar */
+      top: 78px;
       bottom: 0;
       overflow: hidden;
     }
